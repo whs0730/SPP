@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="Decode/Decode.vcxproj" Id="bc07fe66-f740-470e-b232-b6d680ef58ff" />
+  <Project Path="SPP/SPP.vcxproj" Id="bc07fe66-f740-470e-b232-b6d680ef58ff" />
 </Solution>
