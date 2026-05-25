@@ -12,6 +12,7 @@
 using namespace std;
 
 static const char* DEFAULT_INPUT_FILE = "NovatelOEM20211114-01.log";
+// Realtime mode: Decode.exe --stream [ip] [port]
 static const char* DEFAULT_STREAM_IP = "8.148.22.229";
 static const unsigned short DEFAULT_STREAM_PORT = 7003;
 
