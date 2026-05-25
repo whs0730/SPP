@@ -1,0 +1,722 @@
+#pragma once
+#include "obs.h"
+#include "calculate_location_spped.h"
+#include "define.h"
+#include "error_correction.h"
+// 计算双频观测值
+double GetPIF(obsd_t* obs,const eph_t* eph=nullptr)
+{
+    if (obs == nullptr)
+    {
+        return 0.0;
+    }
+
+    int prn = 0;
+    int sys = satsys(obs->sat, &prn);
+
+    if (sys == SYS_GPS)
+    {
+        // GPS L1C + L2P(Y)
+        if (obs->P[0] == 0.0 || obs->P[1] == 0.0)
+        {
+            return 0.0;
+        }
+
+        double f1 = FREQ_GPS_L1;
+        double f2 = FREQ_GPS_L2;
+
+        return (f1 * f1 * obs->P[0] - f2 * f2 * obs->P[1]) /
+            (f1 * f1 - f2 * f2);
+    }
+    else if (sys == SYS_CMP)
+    {
+        // BDS B1I + B3I
+        // 注意：B3I 按老师的 Freq=1 存在 P[1]
+        if (obs->P[0] == 0.0 || obs->P[1] == 0.0)
+        {
+            return 0.0;
+        }
+
+        double f1 = FREQ_BDS_B1;
+        double f3 = FREQ_BDS_B3;
+        double P1 = obs->P[0];  // B1I
+        double P3 = obs->P[1];  // B3I，按你的代码存在 P[1]
+        // BDS B1I 要改 TGD，B3I 不改
+        // TGD 单位是秒，乘光速变成米
+        if (eph != nullptr)
+        {
+            P1 -= Clight * eph->tgd[0];
+        }
+
+        return (f1 * f1 * P1 - f3 * f3 * P3) /
+            (f1 * f1 - f3 * f3);
+    }
+
+    return 0.0;
+}
+static double GetSnrDbHz(unsigned short snr)
+{
+    if (snr == 0)
+    {
+        return 0.0;
+    }
+
+    return snr;
+}
+static bool PassSnrCheck(const obsd_t& obs)
+{
+    int prn = 0;
+    int sys = satsys(obs.sat, &prn);
+
+    double snr1 = 0.0;
+    double snr2 = 0.0;
+
+    if (sys == SYS_GPS)
+    {
+        // GPS L1C + L2P(Y)
+        snr1 = GetSnrDbHz(obs.SNR[0]);
+        snr2 = GetSnrDbHz(obs.SNR[1]);
+    }
+    else if (sys == SYS_CMP)
+    {
+        // BDS B1I + B3I，现在你已经按老师方式存在 P[0]/P[1]
+        snr1 = GetSnrDbHz(obs.SNR[0]);
+        snr2 = GetSnrDbHz(obs.SNR[1]);
+    }
+    else
+    {
+        return false;
+    }
+
+    // 有些数据 SNR 可能没存，等于0时先不筛
+    if (snr1 > 0.0 && snr1 < 30.0)
+    {
+        return false;
+    }
+
+    if (snr2 > 0.0 && snr2 < 30.0)
+    {
+        return false;
+    }
+
+    return true;
+}
+//
+static bool PassElevationCheck(const satpos_t& sat,
+    const double rec_xyz[3],
+    double mask_deg = 10.0)
+{
+    if (rec_xyz == nullptr)
+    {
+        return true;
+    }
+
+    if (sat.pos[0] == 0.0 && sat.pos[1] == 0.0 && sat.pos[2] == 0.0)
+    {
+        return false;
+    }
+
+    XYZ recXYZ;
+    recXYZ.X = rec_xyz[0];
+    recXYZ.Y = rec_xyz[1];
+    recXYZ.Z = rec_xyz[2];
+
+    BLH* recBLH = XYZtoBLH(recXYZ, 6378137.0, 1.0 / 298.257223563);
+
+    double dx = sat.pos[0] - rec_xyz[0];
+    double dy = sat.pos[1] - rec_xyz[1];
+    double dz = sat.pos[2] - rec_xyz[2];
+
+    double rho = sqrt(dx * dx + dy * dy + dz * dz);
+
+    if (rho < 1.0)
+    {
+        delete recBLH;
+        return false;
+    }
+
+    double los[3];
+    los[0] = dx / rho;
+    los[1] = dy / rho;
+    los[2] = dz / rho;
+
+    double azel[2] = { 0.0, 0.0 };
+    double elev_rad = satazel(recBLH, los, azel);
+
+    delete recBLH;
+
+    return elev_rad >= mask_deg * PI / 180.0;
+}
+
+static bool IsValidSatposSPP(const satpos_t& sat)
+{
+    return !(sat.pos[0] == 0.0 &&
+        sat.pos[1] == 0.0 &&
+        sat.pos[2] == 0.0);
+}
+
+
+// =====================================================
+// SPP统一质量控制：
+// 1. GPS/BDS
+// 2. 卫星位置有效
+// 3. 双频PIF有效
+// 4. SNR >= 30 dB-Hz
+// 5. 可选：高度角 >= 10°
+// =====================================================
+static bool PassSppBasicCheck(const obsd_t& obs,
+    const satpos_t& sat,
+    const double* rec_xyz,
+    bool check_elev)
+{
+    int prn = 0;
+    int sys = satsys(obs.sat, &prn);
+
+    if (sys != SYS_GPS && sys != SYS_CMP)
+    {
+        return false;
+    }
+
+    if (!IsValidSatposSPP(sat))
+    {
+        return false;
+    }
+
+    if (GetPIF((obsd_t*)&obs) == 0.0)
+    {
+        return false;
+    }
+
+    if (!PassSnrCheck(obs))
+    {
+        return false;
+    }
+
+    if (check_elev && rec_xyz != nullptr)
+    {
+        if (!PassElevationCheck(sat, rec_xyz, 10.0))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int n, int nv)
+{
+    Matrix B = zeros(nv, 5);
+    Matrix w = zeros(nv, 1);
+    int index = 0;
+    for (int i = 0; i < n; i++)
+    {
+        obsd_t o = obs[i];
+        satpos_t s = sat[i];
+        int prn = 0;
+        int sys = satsys(o.sat, &prn);
+        if (sys != SYS_GPS && sys != SYS_CMP)
+        {
+            continue;
+        }
+        const eph_t* eph = nullptr;
+        if (nav != nullptr && obs[i].sat >= 1 && obs[i].sat <= MAXSAT)
+        {
+            eph = &nav->eph[obs[i].sat - 1];
+        }
+
+        double pif_check = GetPIF(&obs[i], eph);
+
+        if (pif_check == 0.0)
+        {
+            continue;
+        }
+        if (!PassSnrCheck(o))
+        {
+            continue;
+        }
+        if (s.pos[0] == 0.0 && s.pos[1] == 0.0 && s.pos[2] == 0.0)
+        {
+            continue;
+        }
+
+        if (index >= nv)
+        {
+            return nullptr;
+        }
+        double tau = pif_check / Clight;
+        ApplySagnacCorrectionForSPP(s, tau);
+        double Xs = s.pos[0], Ys = s.pos[1], Zs = s.pos[2];
+        double delX = Xs - X[0][0], delY = Ys - X[1][0], delZ = Zs - X[2][0];
+        double p = sqrt(delX * delX + delY * delY + delZ * delZ);
+        double Trop = 0.0;
+
+        if (!(X[0][0] == 0.0 && X[1][0] == 0.0 && X[2][0] == 0.0))
+        {
+            XYZ recXYZ;
+            recXYZ.X = X[0][0];
+            recXYZ.Y = X[1][0];
+            recXYZ.Z = X[2][0];
+
+            BLH* recBLH = XYZtoBLH(recXYZ, 6378137.0, 1.0 / 298.257223563);
+
+            double los[3];
+            los[0] = delX / p;
+            los[1] = delY / p;
+            los[2] = delZ / p;
+
+            double azel[2] = { 0.0, 0.0 };
+            double elev_rad = satazel(recBLH, los, azel);
+
+            // 高度角筛选
+            if (elev_rad < 10.0 * PI / 180.0)
+            {
+                delete recBLH;
+                continue;
+            }
+
+            // 对流层改正
+            Trop = Hopfield_delTrop(recBLH->H, elev_rad);
+
+            delete recBLH;
+        }
+        if (p < 1.0)
+        {
+            return nullptr;
+        }
+        double B1 = -delX / p, B2 = -delY / p, B3 = -delZ / p;
+        double rec_clk = 0.0;
+        if (sys == SYS_GPS)
+        {
+            B[index][0] = B1;
+            B[index][1] = B2;
+            B[index][2] = B3;
+            B[index][3] = 1.0;
+            B[index][4] = 0.0;
+            rec_clk = X[3][0];
+        }
+        else if (sys == SYS_CMP)
+        {
+            B[index][0] = B1;
+            B[index][1] = B2;
+            B[index][2] = B3;
+            B[index][3] = 0.0;
+            B[index][4] = 1.0;
+            rec_clk = X[4][0];
+        }
+        w[index][0] = pif_check - (p + rec_clk - Clight * s.clk + Trop);
+        index++;
+    }
+    if (index < 5)
+    {
+        return nullptr;
+    }
+    // 只保留真正参与解算的行
+    B.resize(index);
+    w.resize(index);
+    Matrix N, dx;
+    try
+    {
+        N = mul(transpose(B), B);
+        N = inverse(N);
+        dx = mul(N, transpose(B));
+        dx = mul(dx, w);
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+    Matrix *m = new Matrix[4];
+    m[0] = add(dx, X);
+    m[1] = B;
+    m[2] = w;
+    m[3] = dx;
+    return m;
+}
+Matrix* IterativeSolution(obsd_t* obs, satpos_t* sat, const nav_t* nav, double* PIF, int n, int nv, int times = 1, double Threshold = 1e-6)
+{
+    Matrix X = zeros(5, 1);
+    Matrix *m = nullptr; // X,B,w
+    while (times <= 10)
+    {
+        if (m != nullptr)
+        {
+            delete[] m;
+            m = nullptr;
+        }
+        m = LeastSquares(X, obs, sat, nav,n, nv);
+        if (m == nullptr)
+        {
+            return nullptr;
+        }
+        Matrix dX = sub(m[0], X);
+        double dpos = sqrt(dX[0][0] * dX[0][0] + dX[1][0] * dX[1][0] + dX[2][0] * dX[2][0]);
+        if (dpos < Threshold)
+        {
+            return m;
+        }
+
+        X = m[0];
+        times++;
+    }
+    return m;
+}
+void PIF(obsd_t* obs,int n,satpos_t* sat,int* nv,double* pif,int* a = nullptr,int* b = nullptr)
+{
+    int index = 0;
+
+    if (nv) *nv = 0;
+    if (a)  *a = 0;
+    if (b)  *b = 0;
+
+    for (int i = 0; i < n; i++)
+    {
+        obsd_t o = obs[i];
+        satpos_t s = sat[i];
+
+        // PIF阶段先不做高度角，因为此时还没有可靠接收机坐标
+        if (!PassSppBasicCheck(o, s, nullptr, false))
+        {
+            continue;
+        }
+
+        int prn = 0;
+        int sys = satsys(o.sat, &prn);
+
+        if (sys == SYS_GPS)
+        {
+            if (a) (*a)++;
+        }
+        else if (sys == SYS_CMP)
+        {
+            if (b) (*b)++;
+        }
+
+        pif[index++] = GetPIF(&obs[i]);
+    }
+
+    if (nv) *nv = index;
+}
+bool SPP(obsd_t *obs, int n, const nav_t *nav, sol_t *sol, satpos_t *sat, int *nv)
+{
+    if (obs == nullptr || sol == nullptr || sat == nullptr || nv == nullptr)
+    {
+        return false;
+    }
+    double X0 = 0.0, Y0 = 0.0, Z0 = 0.0; // 位置初始化
+    int times = 0;
+    double *pif = new double[n];
+    int a = 0;
+    int b = 0;
+    // 计算双频组合观测值
+    PIF(obs, n, sat, nv, pif, &a, &b);
+    if (*nv < 5 || a <= 0 || b <= 0)
+    {
+        sol->stat = 0;
+        delete[] pif;
+        return false;
+    }
+    // 迭代解算
+    Matrix *m = IterativeSolution(obs, sat, nav,pif, n, *nv);
+    if (m == nullptr)
+    {
+        sol->stat = 0;
+        delete[] pif;
+        return false;
+    }
+    Matrix X = m[0]; // 坐标和接收机钟差
+    Matrix B = m[1];
+    Matrix w = m[2];
+    Matrix dx = m[3];  
+    *nv = (int)B.size();// 最后一次迭代真实值与参考值的差
+    Matrix v = sub(mul(B, dx), w); // 残差
+    double vtv = mul(transpose(v), v)[0][0];
+    double sigma0 = 0.0;
+    if (*nv > 5)
+    {
+        sigma0 = sqrt(vtv / double(*nv - 5));
+    }
+    Matrix Qxx = inverse(mul(transpose(B), B));
+    Matrix Dxx = scalar_mul(sigma0*sigma0, Qxx);
+    double PDOP = sqrt(Qxx[0][0] + Qxx[1][1] + Qxx[2][2]);
+    sol->time = obs[0].time;
+    sol->XYZ[0] = X[0][0];
+    sol->XYZ[1] = X[1][0];
+    sol->XYZ[2] = X[2][0];
+    sol->dtr[0] = X[3][0]; // GPS
+    sol->dtr[1] = X[4][0]; // BDS
+    sol->Q = Qxx;
+    sol->pdop = PDOP;
+    sol->sigma0 = sigma0;
+    sol->ns = *nv;
+    sol->stat = 1;
+    delete[] pif;
+    delete[] m;
+    return true;
+}
+//******************************* */测速
+// 多普勒转距离率函数
+double DopplerToRangeRate(obsd_t o)
+{
+    int prn = 0;
+    int sys = satsys(o.sat, &prn);
+
+    double f = 0.0;
+
+    if (sys == SYS_GPS)
+    {
+        f = FREQ_GPS_L1;
+    }
+    else if (sys == SYS_CMP)
+    {
+        f = FREQ_BDS_B1;
+    }
+    else
+    {
+        return 0.0;
+    }
+
+    double lambda = Clight / f;
+    // 卫星接近时 Doppler 为正，而距离率为负
+    double D_mps = -lambda * o.D[0];
+
+    return D_mps;
+}
+// 确定有效星历数量
+int CountSpeedObs(obsd_t *obs, satpos_t *sat, int n, sol_t *sol)
+{
+    if (obs == nullptr || sat == nullptr || sol == nullptr)
+    {
+        return 0;
+    }
+
+    if (sol->stat != 1)
+    {
+        return 0;
+    }
+
+    int nv = 0;
+
+    for (int i = 0; i < n; i++)
+    {
+        obsd_t o = obs[i];
+        satpos_t s = sat[i];
+
+        int prn = 0;
+        int sys = satsys(o.sat, &prn);
+
+        if (sys != SYS_GPS && sys != SYS_CMP)
+        {
+            continue;
+        }
+
+        // 多普勒不能为0
+        if (fabs(o.D[0]) < 1e-9)
+        {
+            continue;
+        }
+
+        // 卫星位置不能为0
+        if (s.pos[0] == 0.0 && s.pos[1] == 0.0 && s.pos[2] == 0.0)
+        {
+            continue;
+        }
+
+        // 卫星速度不能为0
+        if (s.vel[0] == 0.0 && s.vel[1] == 0.0 && s.vel[2] == 0.0)
+        {
+            continue;
+        }
+
+        nv++;
+    }
+
+    return nv;
+}
+// 速度最小二乘求解
+Matrix *SpeedLeastSquares(obsd_t *obs, satpos_t *sat, int n, sol_t *sol, int nv)
+{
+    Matrix B = zeros(nv, 4);
+    Matrix w = zeros(nv, 1);
+
+    int index = 0;
+
+    for (int i = 0; i < n; i++)
+    {
+        obsd_t o = obs[i];
+        satpos_t s = sat[i];
+
+        int prn = 0;
+        int sys = satsys(o.sat, &prn);
+
+        if (sys != SYS_GPS && sys != SYS_CMP)
+        {
+            continue;
+        }
+
+        if (fabs(o.D[0]) < 1e-9)
+        {
+            continue;
+        }
+
+        if (s.pos[0] == 0.0 && s.pos[1] == 0.0 && s.pos[2] == 0.0)
+        {
+            continue;
+        }
+
+        if (s.vel[0] == 0.0 && s.vel[1] == 0.0 && s.vel[2] == 0.0)
+        {
+            continue;
+        }
+
+        double Xs = s.pos[0];
+        double Ys = s.pos[1];
+        double Zs = s.pos[2];
+
+        double Xr = sol->XYZ[0];
+        double Yr = sol->XYZ[1];
+        double Zr = sol->XYZ[2];
+
+        double delX = Xs - Xr;
+        double delY = Ys - Yr;
+        double delZ = Zs - Zr;
+
+        double rho = sqrt(delX * delX + delY * delY + delZ * delZ);
+
+        if (rho < 1.0)
+        {
+            continue;
+        }
+
+        // 方向余弦
+        double l = delX / rho;
+        double m = delY / rho;
+        double nn = delZ / rho;
+
+        // 多普勒转距离率，单位 m/s
+        double D_mps = DopplerToRangeRate(o);
+
+        // 卫星速度沿视线方向投影
+        double sat_rate = l * s.vel[0] + m * s.vel[1] + nn * s.vel[2];
+        if (index >= nv)
+        {
+            return nullptr;
+        }
+        // B矩阵
+        // D = sat_rate - l*Vx - m*Vy - n*Vz + dtrd - c*dclk
+        // 整理：
+        // D - sat_rate + c*dclk = -l*Vx -m*Vy -n*Vz + dtrd
+        B[index][0] = -l;
+        B[index][1] = -m;
+        B[index][2] = -nn;
+        B[index][3] = 1.0;
+
+        // w矩阵
+        w[index][0] = D_mps - sat_rate + Clight * s.dclk;
+
+        index++;
+    }
+    if (index != nv)
+    {
+        return nullptr;
+    }
+    Matrix N, x;
+
+    N = mul(transpose(B), B);
+    N = inverse(N);
+
+    x = mul(N, transpose(B));
+    x = mul(x, w);
+
+    Matrix v = sub(mul(B, x), w);
+
+    Matrix *result = new Matrix[4];
+
+    result[0] = x; // Vx Vy Vz dtrd
+    result[1] = B;
+    result[2] = w;
+    result[3] = v; // 残差
+
+    return result;
+}
+bool SPP_Speed(obsd_t *obs, int n, sol_t *sol, satpos_t *sat, solvel_t *vsol, int *nv)
+{
+    if (obs == nullptr || sat == nullptr || sol == nullptr || vsol == nullptr || nv == nullptr)
+    {
+        return false;
+    }
+
+    if (sol->stat != 1)
+    {
+        vsol->stat = 0;
+        *nv = 0;
+        return false;
+    }
+
+    *nv = CountSpeedObs(obs, sat, n, sol);
+
+    // 测速至少4颗卫星
+    if (*nv < 4)
+    {
+        vsol->stat = 0;
+        return false;
+    }
+
+    Matrix *m = nullptr;
+
+    try
+    {
+        m = SpeedLeastSquares(obs, sat, n, sol, *nv);
+    }
+    catch (...)
+    {
+        vsol->stat = 0;
+        if (m != nullptr)
+        {
+            delete[] m;
+        }
+        return false;
+    }
+
+    if (m == nullptr)
+    {
+        vsol->stat = 0;
+        return false;
+    }
+
+    if (m == nullptr)
+    {
+        vsol->stat = 0;
+        return false;
+    }
+    Matrix x = m[0];
+    Matrix B = m[1];
+    Matrix w = m[2];
+    Matrix v = m[3];
+
+    double vtv = mul(transpose(v), v)[0][0];
+
+    double sigma0 = 0.0;
+    if (*nv > 4)
+    {
+        sigma0 = sqrt(vtv / double(*nv - 4));
+    }
+
+    Matrix Qxx = inverse(mul(transpose(B), B));
+
+    vsol->time = sol->time;
+
+    vsol->V[0] = x[0][0];
+    vsol->V[1] = x[1][0];
+    vsol->V[2] = x[2][0];
+
+    // 接收机钟速，单位 m/s
+    vsol->dtrd = x[3][0];
+
+    vsol->Q = Qxx;
+    vsol->sigma0 = sigma0;
+    vsol->ns = *nv;
+    vsol->stat = 1;
+
+    delete[] m;
+
+    return true;
+}
