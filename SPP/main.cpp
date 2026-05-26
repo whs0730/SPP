@@ -12,7 +12,8 @@
 using namespace std;
 
 static const char* DEFAULT_INPUT_FILE = "NovatelOEM20211114-01.log";
-// Realtime mode: SPP.exe --stream [ip] [port]
+// 实时模式：SPP.exe --stream [ip] [port]。
+// 不带 --stream 时，argv[1] 按 OEM4 二进制日志文件处理。
 static const char* DEFAULT_STREAM_IP = "8.148.22.229";
 static const unsigned short DEFAULT_STREAM_PORT = 7003;
 
@@ -111,6 +112,8 @@ int main(int argc, char* argv[])
     string stream_ip = DEFAULT_STREAM_IP;
     unsigned short stream_port = DEFAULT_STREAM_PORT;
 
+    // 实时模式和文件模式只是在数据来源上不同；读到完整 OEM4 帧之后，
+    // 两者共用 decode_oem4() 和后续 SPP 解算流程。
     if (argc > 1 && IsStreamModeArg(argv[1]))
     {
         realtime = true;
@@ -134,6 +137,8 @@ int main(int argc, char* argv[])
 
     if (realtime)
     {
+        // 进入处理循环前先打开 TCP 实时流；socket 错误会保存在
+        // stream.LastError() 中，便于输出具体原因。
         if (!stream.Open(stream_ip.c_str(), stream_port))
         {
             cerr << "Cannot open realtime stream " << stream_ip << ":" << stream_port
@@ -159,6 +164,7 @@ int main(int argc, char* argv[])
 
     if (realtime)
     {
+        // 保存实时接收到的有效 OEM4 观测/星历报文，后续可按文件模式回放。
         outRaw.open("realtime_raw_oem.log", ios::binary);
     }
 
@@ -178,6 +184,8 @@ int main(int argc, char* argv[])
 
     while (true)
     {
+        // ret 含义来自 decode_oem4()：
+        // 1 = 观测历元，2 = 星历更新，0 = 跳过消息。
         ret = realtime ? input_oem4s(&raw, &stream) : input_oem4f(&raw, fp);
 
         if (ret == -2)
@@ -192,9 +200,12 @@ int main(int argc, char* argv[])
         if (realtime && outRaw.is_open() && (ret == 1 || ret == 2) &&
             raw.len > 0 && raw.len + 4 <= MAXRAWLEN)
         {
+            // 当前 raw.len 不包含尾部 CRC，因此写入 len + 4 字节以保留完整 OEM4 帧。
             outRaw.write(reinterpret_cast<const char*>(raw.buff), raw.len + 4);
         }
 
+        // 只有观测历元才触发定位；星历消息已在 decode_oem4() 中更新 raw.nav，
+        // 然后等待下一组观测值参与解算。
         if (ret != 1) continue;
         if (raw.obs.n <= 0) continue;
 
@@ -227,6 +238,7 @@ int main(int argc, char* argv[])
             obsd_t* obs = &raw.obs.data[i];
             eph_t* eph = find_eph(&raw.nav, obs->sat);
 
+            // 实时流中观测值可能先于对应星历到达；此时暂时跳过该卫星。
             if (!has_valid_eph(eph)) continue;
 
             satpos_t sat{};

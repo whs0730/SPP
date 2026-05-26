@@ -15,6 +15,9 @@
 
 #pragma comment(lib, "Ws2_32.lib")
 
+// NovAtel OEM4 二进制实时流的 TCP 读取器。
+// 这里只负责 socket 管理和按字节读取；OEM4 组帧和解码仍放在
+// input_oem4s()/decode_oem4() 中，保证实时流和文件回放走同一套流程。
 class TcpOem4Stream {
 public:
     TcpOem4Stream() = default;
@@ -28,6 +31,7 @@ public:
     {
         Close();
 
+        // 使用 Windows socket API 前必须先初始化 Winsock。
         WSADATA wsa_data{};
         int wsa_ret = WSAStartup(MAKEWORD(2, 2), &wsa_data);
         if (wsa_ret != 0) {
@@ -60,6 +64,8 @@ public:
             return false;
         }
 
+        // recv() 可能一次读不到请求的全部字节；设置超时可以避免断流时
+        // ReadExact() 一直阻塞。
         setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO,
             reinterpret_cast<const char*>(&recv_timeout_ms), sizeof(recv_timeout_ms));
 
@@ -94,6 +100,8 @@ public:
 
         int got = 0;
         while (got < len) {
+            // TCP 是连续字节流，不保留报文边界，因此需要循环 recv，
+            // 直到凑齐调用方要求的字节数。
             int n = recv(sock_, reinterpret_cast<char*>(data + got), len - got, 0);
             if (n > 0) {
                 got += n;
@@ -106,6 +114,7 @@ public:
             }
 
             int err = WSAGetLastError();
+            // 超时或中断按临时状态处理；实时数据有短暂间隔时继续等待。
             if (err == WSAEINTR || err == WSAETIMEDOUT) {
                 continue;
             }
@@ -133,8 +142,8 @@ private:
     std::string last_error_;
 };
 
-// Socket input variant of input_oem4f(). Return values follow decode_oem4():
-// 1 = observation epoch, 2 = ephemeris, 0 = skipped message, negative = error/end.
+// input_oem4f() 的 socket 输入版本。返回值沿用 decode_oem4()：
+// 1 = 观测历元，2 = 星历，0 = 跳过消息，负数 = 错误或结束。
 static int input_oem4s(raw_t* raw, TcpOem4Stream* stream)
 {
     if (raw == nullptr || stream == nullptr) {
@@ -144,6 +153,8 @@ static int input_oem4s(raw_t* raw, TcpOem4Stream* stream)
     uint8_t data = 0;
 
     if (raw->nbyte == 0) {
+        // 在连续 TCP 字节流中查找 OEM4 同步头 AA 44 12。
+        // 同步头之前的字节视为噪声或残缺报文并丢弃。
         for (int i = 0;; i++) {
             if (!stream->ReadByte(&data)) {
                 return -2;
@@ -157,6 +168,7 @@ static int input_oem4s(raw_t* raw, TcpOem4Stream* stream)
         }
     }
 
+    // 已经读到 3 字节同步头；再读够头部字节，取得 buff + 8 处的报文长度字段。
     if (!stream->ReadExact(raw->buff + 3, 7)) {
         return -2;
     }
@@ -168,6 +180,7 @@ static int input_oem4s(raw_t* raw, TcpOem4Stream* stream)
         return -1;
     }
 
+    // 继续读取剩余头部、消息体和 CRC，然后把完整 OEM4 帧交给文件模式共用的解码器。
     if (!stream->ReadExact(raw->buff + 10, raw->len - 6)) {
         return -2;
     }
