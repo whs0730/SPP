@@ -362,7 +362,7 @@ static int decode_rangeb(raw_t* raw) {
             raw->obs.data[index].L[idx] = adr;
             raw->obs.data[index].P[idx] = psr;
             raw->obs.data[index].D[idx] = (float)dop;
-            raw->obs.data[index].SNR[idx] = (float)(snr / SNR_UNIT + 0.5);
+            raw->obs.data[index].SNR[idx] = snr / SNR_UNIT;
             raw->obs.data[index].LLI[idx] = (unsigned char)lli;
             raw->obs.data[index].code[idx] = (unsigned char)code;
         }
@@ -430,7 +430,7 @@ static int decode_rangecmpb(raw_t* raw) {
             raw->obs.data[index].L[idx] = adr;
             raw->obs.data[index].P[idx] = psr;
             raw->obs.data[index].D[idx] = (float)dop;
-            raw->obs.data[index].SNR[idx] = (float)(snr / SNR_UNIT + 0.5);
+            raw->obs.data[index].SNR[idx] = snr / SNR_UNIT;
             raw->obs.data[index].LLI[idx] = (unsigned char)lli;
             raw->obs.data[index].code[idx] = (unsigned char)code;
         }

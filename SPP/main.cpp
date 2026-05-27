@@ -17,9 +17,10 @@ static const char* DEFAULT_INPUT_FILE = "NovatelOEM20211114-01.log";
 static const char* DEFAULT_STREAM_IP = "8.148.22.229";
 static const unsigned short DEFAULT_STREAM_PORT = 7003;
 
-static const double REF_X = -2267809.273;
-static const double REF_Y = 5009323.033;
-static const double REF_Z = 3221015.978;
+// 离线结果精度分析使用的参考坐标，与 NovatelOEM20211114-01.pos 中的 REF-ECEF 保持一致。
+static const double REF_X = -2267804.5260;
+static const double REF_Y = 5009342.3720;
+static const double REF_Z = 3220991.8630;
 
 void CountSolutionSats(obsd_t* obs,
     satpos_t* sats,
@@ -168,8 +169,7 @@ int main(int argc, char* argv[])
         outRaw.open("realtime_raw_oem.log", ios::binary);
     }
 
-    outSol << "  Wk        SOW"
-        << "     ECEF-X/m       ECEF-Y/m       ECEF-Z/m"
+    outSol << "  Wk        SOW     ECEF-X/m       ECEF-Y/m       ECEF-Z/m"
         << "    REF-ECEF-X/m    REF-ECEF-Y/m   REF-ECEF-Z/m"
         << "   EAST/m   NORTH/m  UP/m"
         << "         B/deg         L/deg             H/m"
@@ -222,9 +222,14 @@ int main(int argc, char* argv[])
             outObs << obs0->time.week << " "
                 << fixed << setprecision(3) << obs0->time.sec << " "
                 << sat2id(obs->sat) << " "
+                << fixed << setprecision(3)
                 << obs->P[0] << " "
+                << fixed << setprecision(4)
                 << obs->L[0] << " "
-                << obs->D[0] << endl;
+                << fixed << setprecision(3)
+                << obs->D[0] << " "
+                << fixed << setprecision(3)
+                << obs->SNR[0] << endl;
         }
 
         // =====================================================

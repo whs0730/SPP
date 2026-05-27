@@ -9,7 +9,7 @@ struct obsd_t {
     double L[NFREQ + NEXOBS];               // 相位观测（周）
     double P[NFREQ + NEXOBS];               // 伪距观测（米）
     float D[NFREQ + NEXOBS];                // 多普勒/码率
-    unsigned short SNR[NFREQ + NEXOBS];     // 信噪比
+    double SNR[NFREQ + NEXOBS];             // 信噪比（dB-Hz）
     unsigned char LLI[NFREQ + NEXOBS];      // 周跳标记
     unsigned char code[NFREQ + NEXOBS];     // 观测码类型
 } ;

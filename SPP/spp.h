@@ -54,7 +54,7 @@ double GetPIF(obsd_t* obs,const eph_t* eph=nullptr)
 
     return 0.0;
 }
-static double GetSnrDbHz(unsigned short snr)
+static double GetSnrDbHz(double snr)
 {
     if (snr == 0)
     {
