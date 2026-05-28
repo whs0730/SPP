@@ -155,6 +155,90 @@ static bool IsValidSatposSPP(const satpos_t& sat)
         sat.pos[2] == 0.0);
 }
 
+// SPP只使用已经成功解码的广播星历。
+// 这里集中判断星历是否存在、卫星号是否有效、轨道长半轴是否有效。
+static bool HasValidEphSPP(const eph_t* eph)
+{
+    if (eph == nullptr)
+    {
+        return false;
+    }
+
+    if (eph->sat <= 0)
+    {
+        return false;
+    }
+
+    if (eph->sqrtA <= 0.0)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// 根据内部卫星号从导航数据中取星历。
+// 后续PIF、最小二乘和输出统计都通过这个函数取星历，避免各处判断标准不一致。
+static const eph_t* GetSppEph(const nav_t* nav, int sat)
+{
+    if (nav == nullptr || sat < 1 || sat > MAXSAT)
+    {
+        return nullptr;
+    }
+
+    const eph_t* eph = &nav->eph[sat - 1];
+    return HasValidEphSPP(eph) ? eph : nullptr;
+}
+
+// 计算当前接收机位置下的卫星高度角，单位为弧度。
+// 高度角筛选、对流层改正和最终用星统计都复用这个函数。
+static bool ComputeElevationRad(const satpos_t& sat,
+    const double rec_xyz[3],
+    double& elev_rad)
+{
+    elev_rad = 0.0;
+
+    if (rec_xyz == nullptr)
+    {
+        return false;
+    }
+
+    if (!IsValidSatposSPP(sat))
+    {
+        return false;
+    }
+
+    XYZ recXYZ;
+    recXYZ.X = rec_xyz[0];
+    recXYZ.Y = rec_xyz[1];
+    recXYZ.Z = rec_xyz[2];
+
+    BLH* recBLH = XYZtoBLH(recXYZ, 6378137.0, 1.0 / 298.257223563);
+
+    double dx = sat.pos[0] - rec_xyz[0];
+    double dy = sat.pos[1] - rec_xyz[1];
+    double dz = sat.pos[2] - rec_xyz[2];
+
+    double rho = sqrt(dx * dx + dy * dy + dz * dz);
+
+    if (rho < 1.0)
+    {
+        delete recBLH;
+        return false;
+    }
+
+    double los[3];
+    los[0] = dx / rho;
+    los[1] = dy / rho;
+    los[2] = dz / rho;
+
+    double azel[2] = { 0.0, 0.0 };
+    elev_rad = satazel(recBLH, los, azel);
+
+    delete recBLH;
+    return true;
+}
+
 
 // =====================================================
 // SPP统一质量控制：
@@ -166,41 +250,69 @@ static bool IsValidSatposSPP(const satpos_t& sat)
 // =====================================================
 static bool PassSppBasicCheck(const obsd_t& obs,
     const satpos_t& sat,
+    const eph_t* eph,
     const double* rec_xyz,
-    bool check_elev)
+    bool check_elev,
+    double* pif_out = nullptr)
 {
     int prn = 0;
     int sys = satsys(obs.sat, &prn);
 
+    // 当前SPP只解GPS和BDS；其他系统先不参与定位。
     if (sys != SYS_GPS && sys != SYS_CMP)
     {
         return false;
     }
 
+    // 没有卫星坐标时无法建立观测方程。
     if (!IsValidSatposSPP(sat))
     {
         return false;
     }
 
-    if (GetPIF((obsd_t*)&obs) == 0.0)
+    // 统一在这里计算双频无电离层组合。
+    // BDS的TGD改正在GetPIF()内部完成，因此预筛和最小二乘使用同一个PIF值。
+    double pif = GetPIF((obsd_t*)&obs, eph);
+    if (pif == 0.0)
     {
         return false;
     }
 
+    // SNR门限统一放在这里，避免输出统计和真正解算使用不同卫星。
     if (!PassSnrCheck(obs))
     {
         return false;
     }
 
+    // 初始迭代时还没有可靠接收机坐标，所以高度角检查可选。
+    // 一旦有接收机坐标，就启用10度截止高度角。
     if (check_elev && rec_xyz != nullptr)
     {
-        if (!PassElevationCheck(sat, rec_xyz, 10.0))
+        double elev_rad = 0.0;
+        if (!ComputeElevationRad(sat, rec_xyz, elev_rad) ||
+            elev_rad < 10.0 * PI / 180.0)
         {
             return false;
         }
     }
 
+    // 调用方如果需要PIF数值，可以直接取走，避免重复计算造成不一致。
+    if (pif_out != nullptr)
+    {
+        *pif_out = pif;
+    }
+
     return true;
+}
+
+static bool PassSppBasicCheck(const obsd_t& obs,
+    const satpos_t& sat,
+    const double* rec_xyz,
+    bool check_elev)
+{
+    // 兼容旧调用：没有传星历时仍可做GPS IF检查；
+    // BDS TGD相关检查建议使用带eph参数的重载版本。
+    return PassSppBasicCheck(obs, sat, nullptr, rec_xyz, check_elev, nullptr);
 }
 Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int n, int nv)
 {
@@ -209,31 +321,12 @@ Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int
     int index = 0;
     for (int i = 0; i < n; i++)
     {
-        obsd_t o = obs[i];
         satpos_t s = sat[i];
-        int prn = 0;
-        int sys = satsys(o.sat, &prn);
-        if (sys != SYS_GPS && sys != SYS_CMP)
-        {
-            continue;
-        }
-        const eph_t* eph = nullptr;
-        if (nav != nullptr && obs[i].sat >= 1 && obs[i].sat <= MAXSAT)
-        {
-            eph = &nav->eph[obs[i].sat - 1];
-        }
+        // 统一获取星历，并交给PassSppBasicCheck()完成系统、伪距、SNR等预筛。
+        const eph_t* eph = GetSppEph(nav, obs[i].sat);
 
-        double pif_check = GetPIF(&obs[i], eph);
-
-        if (pif_check == 0.0)
-        {
-            continue;
-        }
-        if (!PassSnrCheck(o))
-        {
-            continue;
-        }
-        if (s.pos[0] == 0.0 && s.pos[1] == 0.0 && s.pos[2] == 0.0)
+        double pif_check = 0.0;
+        if (!PassSppBasicCheck(obs[i], s, eph, nullptr, false, &pif_check))
         {
             continue;
         }
@@ -251,6 +344,20 @@ Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int
 
         if (!(X[0][0] == 0.0 && X[1][0] == 0.0 && X[2][0] == 0.0))
         {
+            // 从第二轮迭代开始已有接收机近似坐标，可以计算高度角并进行10度截止。
+            double rec_xyz[3] = {
+                X[0][0],
+                X[1][0],
+                X[2][0]
+            };
+
+            double elev_rad = 0.0;
+            if (!ComputeElevationRad(s, rec_xyz, elev_rad) ||
+                elev_rad < 10.0 * PI / 180.0)
+            {
+                continue;
+            }
+
             XYZ recXYZ;
             recXYZ.X = X[0][0];
             recXYZ.Y = X[1][0];
@@ -258,22 +365,7 @@ Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int
 
             BLH* recBLH = XYZtoBLH(recXYZ, 6378137.0, 1.0 / 298.257223563);
 
-            double los[3];
-            los[0] = delX / p;
-            los[1] = delY / p;
-            los[2] = delZ / p;
-
-            double azel[2] = { 0.0, 0.0 };
-            double elev_rad = satazel(recBLH, los, azel);
-
-            // 高度角筛选
-            if (elev_rad < 10.0 * PI / 180.0)
-            {
-                delete recBLH;
-                continue;
-            }
-
-            // 对流层改正
+            // 对流层改正使用同一个高度角，避免筛选和改正使用不同几何量。
             Trop = Hopfield_delTrop(recBLH->H, elev_rad);
 
             delete recBLH;
@@ -284,6 +376,8 @@ Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int
         }
         double B1 = -delX / p, B2 = -delY / p, B3 = -delZ / p;
         double rec_clk = 0.0;
+        int prn = 0;
+        int sys = satsys(obs[i].sat, &prn);
         if (sys == SYS_GPS)
         {
             B[index][0] = B1;
@@ -359,7 +453,14 @@ Matrix* IterativeSolution(obsd_t* obs, satpos_t* sat, const nav_t* nav, double* 
     }
     return m;
 }
-void PIF(obsd_t* obs,int n,satpos_t* sat,int* nv,double* pif,int* a = nullptr,int* b = nullptr)
+void PIF(obsd_t* obs,
+    int n,
+    satpos_t* sat,
+    const nav_t* nav,
+    int* nv,
+    double* pif,
+    int* a = nullptr,
+    int* b = nullptr)
 {
     int index = 0;
 
@@ -371,9 +472,13 @@ void PIF(obsd_t* obs,int n,satpos_t* sat,int* nv,double* pif,int* a = nullptr,in
     {
         obsd_t o = obs[i];
         satpos_t s = sat[i];
+        // PIF预筛也传入星历，使BDS TGD改正和后续最小二乘保持一致。
+        const eph_t* eph = GetSppEph(nav, obs[i].sat);
+        double pif_value = 0.0;
 
-        // PIF阶段先不做高度角，因为此时还没有可靠接收机坐标
-        if (!PassSppBasicCheck(o, s, nullptr, false))
+        // PIF阶段先不做高度角，因为此时还没有可靠接收机坐标。
+        // 高度角筛选会在最小二乘迭代中有近似坐标后再执行。
+        if (!PassSppBasicCheck(o, s, eph, nullptr, false, &pif_value))
         {
             continue;
         }
@@ -390,7 +495,7 @@ void PIF(obsd_t* obs,int n,satpos_t* sat,int* nv,double* pif,int* a = nullptr,in
             if (b) (*b)++;
         }
 
-        pif[index++] = GetPIF(&obs[i]);
+        pif[index++] = pif_value;
     }
 
     if (nv) *nv = index;
@@ -407,7 +512,7 @@ bool SPP(obsd_t *obs, int n, const nav_t *nav, sol_t *sol, satpos_t *sat, int *n
     int a = 0;
     int b = 0;
     // 计算双频组合观测值
-    PIF(obs, n, sat, nv, pif, &a, &b);
+    PIF(obs, n, sat, nav, nv, pif, &a, &b);
     if (*nv < 5 || a <= 0 || b <= 0)
     {
         sol->stat = 0;
