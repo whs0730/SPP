@@ -3,7 +3,9 @@
 #include "calculate_location_spped.h"
 #include "define.h"
 #include "error_correction.h"
-// 计算双频观测值
+// 计算双频无电离层组合伪距。
+// GPS L1/L2 IF组合不额外处理TGD；
+// BDS B1I/B3I的TGD在这里改到伪距观测值上，不放进卫星钟差。
 double GetPIF(obsd_t* obs,const eph_t* eph=nullptr)
 {
     if (obs == nullptr)
@@ -41,8 +43,8 @@ double GetPIF(obsd_t* obs,const eph_t* eph=nullptr)
         double f3 = FREQ_BDS_B3;
         double P1 = obs->P[0];  // B1I
         double P3 = obs->P[1];  // B3I，按你的代码存在 P[1]
-        // BDS B1I 要改 TGD，B3I 不改
-        // TGD 单位是秒，乘光速变成米
+        // BDS B1I 要改 TGD，B3I 不改。
+        // TGD 单位是秒，乘光速变成米；这里处理后，后续最小二乘直接使用IF伪距。
         if (eph != nullptr)
         {
             P1 -= Clight * eph->tgd[0];

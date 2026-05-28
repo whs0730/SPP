@@ -10,6 +10,7 @@
 
 
 void CalculateGPS(gtime_t t, eph_t* eph, satpos_t* sat) {
+	// GPS星历和观测历元均按GPST组织，直接用GPST计算tk和钟差。
 	//计算位置
 	double e = eph->e;
 	double n0 = sqrt(mu_gps) / pow(eph->sqrtA, 3);
@@ -104,6 +105,9 @@ void CalculateGPS(gtime_t t, eph_t* eph, satpos_t* sat) {
 
 
 void CalculateBDS(gtime_t t, eph_t* eph, satpos_t* sat) {
+	// 传入的t为观测历元GPST。
+	// BDS星历解码时已把toe/toc由BDT转换到GPST，因此timediff(t, eph->toe/toc)可直接使用；
+	// 同时eph->toes保留原始BDT周内秒，用于BDS升交点经度中的地球自转项。
 	//计算位置
 	double e = eph->e;
 	double n0 = sqrt(mu_bds) / pow(eph->sqrtA, 3);

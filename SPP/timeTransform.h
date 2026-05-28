@@ -158,7 +158,8 @@ GPSTime* CommonTimeToGPSTime(CommonTime& CommonTime) {
 }
 
 #define BDT_GPS_WEEK_OFFSET 1356  // 2006-01-01 到 1980-01-06 的固定周差
-// 把BDST转换为gtime_t(注意与GPST的周号之间的差异)
+// 把BDT周秒转换为gtime_t。这里先只统一周号基准，秒仍保持BDT周内秒。
+// 后续如需和GPST观测历元做timediff，需要再通过bdt2gpst()加14秒。
 static gtime_t bdt2time(int week, double sec)
 {
 	gtime_t t;
@@ -182,8 +183,17 @@ static gtime_t timeadd(gtime_t t, double dt)
 	}
 	return t;
 }
-// 把BDST转化为GPST BDST时比GPS时落后14秒： GPST = BDT + 14s（都要转化为gtime_t,因为起始点不一样）
+
+// BDT比GPST慢14秒：GPST = BDT + 14s。
+// BDS星历的toe/toc来自BDT，转为GPST后才能和观测历元GPST直接相减。
 static gtime_t bdt2gpst(gtime_t t)
 {
 	return timeadd(t, 14.0);
+}
+
+// GPST转BDT：BDT = GPST - 14s。
+// 当前程序主要把BDS toe/toc转到GPST参与计算；保留此函数用于说明时间关系和后续扩展。
+static gtime_t gpst2bdt(gtime_t t)
+{
+	return timeadd(t, -14.0);
 }

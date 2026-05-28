@@ -195,6 +195,7 @@ static int ComputeSatellitePositions(obsd_t* obs,
     {
         obsd_t* ob = &obs[i];
         eph_t* eph = find_eph(nav, ob->sat);
+        gtime_t obsTimeGPST = ob->time;  // NovAtel OEM4观测历元按GPST组织。
 
         if (!has_valid_eph(eph))
         {
@@ -210,11 +211,14 @@ static int ComputeSatellitePositions(obsd_t* obs,
 
         if (sys == SYS_GPS)
         {
-            CalculateGPS(ob->time, eph, &sat);
+            // GPS星历时间系统为GPST，直接使用观测历元GPST。
+            CalculateGPS(obsTimeGPST, eph, &sat);
         }
         else if (sys == SYS_CMP)
         {
-            CalculateBDS(ob->time, eph, &sat);
+            // BDS星历原始toe/toc属于BDT，但解码时已转换为GPST存入eph->toe/toc；
+            // 因此这里仍传入观测历元GPST，CalculateBDS内部保留BDT秒参与BDS轨道项。
+            CalculateBDS(obsTimeGPST, eph, &sat);
         }
         else
         {

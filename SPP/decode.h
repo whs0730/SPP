@@ -544,6 +544,8 @@ static int decode_bdsephemerisb(raw_t* raw)
     eph->sat = sat;
     eph->prn = prn;
     eph->week = week;
+    // BDS广播星历中的toe/toc属于BDT。toes/tocs保留原始BDT周内秒，
+    // 供BDS轨道升交点经度项使用；toe/toc转为GPST，便于和观测历元GPST求时间差。
     eph->toes = toe;  
     eph->tocs = toc;
     eph->toe = bdt2gpst(bdt2time(week, toe));
@@ -571,6 +573,8 @@ static int decode_bdsephemerisb(raw_t* raw)
     eph->af0 = af0;
     eph->af1 = af1;
     eph->af2 = af2;
+    // TGD只保存到星历中，不在卫星钟差计算处改正。
+    // 本程序在GetPIF()中按伪距组合改正BDS B1I/B3I观测值。
     eph->tgd[0] = tgd1;
     eph->tgd[1] = tgd2;
     raw->ephsat = sat;
