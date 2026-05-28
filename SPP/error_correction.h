@@ -98,8 +98,26 @@ double Klobuchar(gtime_t t, const double* pos,const double* azel, double* ionpar
     return Clight * delay_sec; // 单位 m
 }
 // =====================================================
-// SPP内部：地球自转改正
-// 只改局部 sat，不改 main.cpp 里的 sats 原始数组
+// 地球自转改正：把发射时刻的卫星坐标旋转到接收时刻对应的地固系。
+// tau 为信号传播时间，单位 s。
+// =====================================================
+static void ApplyEarthRotationCorrection(satpos_t& sat, double tau)
+{
+    double theta = OMGed_GPS * tau;
+
+    double x = sat.pos[0];
+    double y = sat.pos[1];
+
+    sat.pos[0] = cos(theta) * x + sin(theta) * y;
+    sat.pos[1] = -sin(theta) * x + cos(theta) * y;
+    // Z 不变
+}
+
+// =====================================================
+// SPP内部旧版近似改正：
+// 从接收时刻卫星状态近似外推到发射时刻，再做地球自转改正。
+// 第4步后主流程已优先在ComputeSatStateAtTransmitTime()中直接计算发射时刻卫星状态。
+// 保留此函数用于说明旧流程和可能的调试对照。
 // =====================================================
 static void ApplySagnacCorrectionForSPP(satpos_t& sat, double tau)
 {
@@ -114,12 +132,5 @@ static void ApplySagnacCorrectionForSPP(satpos_t& sat, double tau)
     sat.clk -= sat.dclk * tau;
 
     // 2. 地球自转改正
-    double theta = OMGed_GPS * tau;
-
-    double x = sat.pos[0];
-    double y = sat.pos[1];
-
-    sat.pos[0] = cos(theta) * x + sin(theta) * y;
-    sat.pos[1] = -sin(theta) * x + cos(theta) * y;
-    // Z 不变
+    ApplyEarthRotationCorrection(sat, tau);
 }

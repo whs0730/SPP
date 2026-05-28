@@ -337,8 +337,8 @@ Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int
         {
             return nullptr;
         }
-        double tau = pif_check / Clight;
-        ApplySagnacCorrectionForSPP(s, tau);
+        // sat[]在主流程ComputeSatStateAtTransmitTime()中已经按发射时刻计算，
+        // 并完成地球自转改正；这里直接用该状态建立伪距观测方程，避免重复改正。
         double Xs = s.pos[0], Ys = s.pos[1], Zs = s.pos[2];
         double delX = Xs - X[0][0], delY = Ys - X[1][0], delZ = Zs - X[2][0];
         double p = sqrt(delX * delX + delY * delY + delZ * delZ);

@@ -182,8 +182,90 @@ static void OutputObservationEpoch(ofstream& outObs, const obs_t& obs_set)
     }
 }
 
+// 按卫星系统调用广播星历计算函数。
+// 注意：本工程解码时已经把BDS星历toe/toc从BDT转换为GPST，
+// 因此这里GPS和BDS都传入GPST时刻；BDS轨道项需要的原始BDT秒保存在eph->toes中。
+static bool CalculateBroadcastSatState(gtime_t calc_time,
+    eph_t* eph,
+    int sat_no,
+    satpos_t& sat)
+{
+    if (!has_valid_eph(eph))
+    {
+        return false;
+    }
+
+    satpos_t tmp{};
+    tmp.sat = sat_no;
+    tmp.time = calc_time;
+
+    int prn = 0;
+    int sys = satsys(sat_no, &prn);
+
+    if (sys == SYS_GPS)
+    {
+        CalculateGPS(calc_time, eph, &tmp);
+    }
+    else if (sys == SYS_CMP)
+    {
+        CalculateBDS(calc_time, eph, &tmp);
+    }
+    else
+    {
+        return false;
+    }
+
+    if (tmp.pos[0] == 0.0 && tmp.pos[1] == 0.0 && tmp.pos[2] == 0.0)
+    {
+        return false;
+    }
+
+    sat = tmp;
+    return true;
+}
+
+// 计算信号发射时刻的卫星状态，并把卫星坐标旋转到接收时刻对应的地固系。
+// 步骤：
+// 1. 用双频IF伪距 PIF/c 得到近似传播时间；
+// 2. 得到近似发射时刻，并计算一次卫星钟差；
+// 3. 用卫星钟差修正发射时刻，再重新计算卫星位置、速度、钟差、钟速；
+// 4. 按传播时间做地球自转改正。
+static bool ComputeSatStateAtTransmitTime(const obsd_t& obs,
+    eph_t* eph,
+    satpos_t& sat)
+{
+    double pif = GetPIF((obsd_t*)&obs, eph);
+    if (pif <= 0.0)
+    {
+        return false;
+    }
+
+    double tau0 = pif / Clight;
+    gtime_t tx0 = timeadd(obs.time, -tau0);
+
+    satpos_t sat0{};
+    if (!CalculateBroadcastSatState(tx0, eph, obs.sat, sat0))
+    {
+        return false;
+    }
+
+    // 卫星钟差为“卫星钟 - 系统时”，发射时刻需要再扣除该钟差。
+    gtime_t tx = timeadd(tx0, -sat0.clk);
+
+    if (!CalculateBroadcastSatState(tx, eph, obs.sat, sat))
+    {
+        return false;
+    }
+
+    double tau = timediff(obs.time, tx);
+    ApplyEarthRotationCorrection(sat, tau);
+    sat.time = tx;
+
+    return true;
+}
+
 // 对当前历元每颗卫星计算位置、速度、钟差和钟速。
-// validSat统计的是“有可用星历且成功算出卫星位置”的GPS/BDS卫星数，
+// validSat统计的是“有可用星历且成功算出发射时刻卫星状态”的GPS/BDS卫星数，
 static int ComputeSatellitePositions(obsd_t* obs,
     int n,
     nav_t* nav,
@@ -195,37 +277,21 @@ static int ComputeSatellitePositions(obsd_t* obs,
     {
         obsd_t* ob = &obs[i];
         eph_t* eph = find_eph(nav, ob->sat);
-        gtime_t obsTimeGPST = ob->time;  // NovAtel OEM4观测历元按GPST组织。
 
         if (!has_valid_eph(eph))
         {
             continue;
         }
 
-        satpos_t sat{};
-        sat.sat = ob->sat;
-        sat.time = ob->time;
-
         int prn = 0;
         int sys = satsys(ob->sat, &prn);
-
-        if (sys == SYS_GPS)
-        {
-            // GPS星历时间系统为GPST，直接使用观测历元GPST。
-            CalculateGPS(obsTimeGPST, eph, &sat);
-        }
-        else if (sys == SYS_CMP)
-        {
-            // BDS星历原始toe/toc属于BDT，但解码时已转换为GPST存入eph->toe/toc；
-            // 因此这里仍传入观测历元GPST，CalculateBDS内部保留BDT秒参与BDS轨道项。
-            CalculateBDS(obsTimeGPST, eph, &sat);
-        }
-        else
+        if (sys != SYS_GPS && sys != SYS_CMP)
         {
             continue;
         }
 
-        if (sat.pos[0] == 0.0 && sat.pos[1] == 0.0 && sat.pos[2] == 0.0)
+        satpos_t sat{};
+        if (!ComputeSatStateAtTransmitTime(*ob, eph, sat))
         {
             continue;
         }
