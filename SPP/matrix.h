@@ -7,13 +7,13 @@ using namespace std;
 typedef vector<vector<double>> Matrix;
 
 // 创建 r×c 的零矩阵，用作初始化
-Matrix zeros(int r, int c)
+inline Matrix zeros(int r, int c)
 {
     return Matrix(r, vector<double>(c, 0.0));
 }
 
 // 创建 n×n 单位矩阵
-Matrix eye(int n)
+inline Matrix eye(int n)
 {
     Matrix I = zeros(n, n);
     for (int i = 0; i < n; i++) I[i][i] = 1.0;
@@ -21,7 +21,7 @@ Matrix eye(int n)
 }
 
 // 打印矩阵
-void printMatrix(const Matrix& A, const string& name = "Matrix")
+inline void printMatrix(const Matrix& A, const string& name = "Matrix")
 {
     cout << name << " =" << endl;
     for (int i = 0; i < (int)A.size(); i++) {
@@ -34,7 +34,7 @@ void printMatrix(const Matrix& A, const string& name = "Matrix")
 }
 
 // 矩阵加法
-Matrix add(const Matrix& A, const Matrix& B)
+inline Matrix add(const Matrix& A, const Matrix& B)
 {
     int r = A.size();
     int c = A[0].size();
@@ -53,7 +53,7 @@ Matrix add(const Matrix& A, const Matrix& B)
 }
 
 // 矩阵减法
-Matrix sub(const Matrix& A, const Matrix& B)
+inline Matrix sub(const Matrix& A, const Matrix& B)
 {
     int r = (int)A.size();
     int c = (int)A[0].size();
@@ -72,7 +72,7 @@ Matrix sub(const Matrix& A, const Matrix& B)
 }
 
 // 矩阵乘法
-Matrix mul(const Matrix& A, const Matrix& B)
+inline Matrix mul(const Matrix& A, const Matrix& B)
 {
     int r1 = (int)A.size();
     int c1 = (int)A[0].size();
@@ -95,7 +95,7 @@ Matrix mul(const Matrix& A, const Matrix& B)
 }
 
 // 矩阵转置
-Matrix transpose(const Matrix& A)
+inline Matrix transpose(const Matrix& A)
 {
     int r = (int)A.size();
     int c = (int)A[0].size();
@@ -110,7 +110,7 @@ Matrix transpose(const Matrix& A)
 }
 
 // 矩阵求逆（高斯-约旦消元法）
-Matrix inverse(const Matrix& A)
+inline Matrix inverse(const Matrix& A)
 {
     int n = (int)A.size();
     if (n != (int)A[0].size()) {
@@ -173,7 +173,7 @@ Matrix inverse(const Matrix& A)
     return invA;
 }
 //常数乘矩阵
-Matrix scalar_mul(double k,const Matrix& A)
+inline Matrix scalar_mul(double k,const Matrix& A)
 {
     int rows = A.size();
     int cols = A[0].size();

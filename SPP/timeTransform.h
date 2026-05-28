@@ -1,4 +1,5 @@
 #pragma once
+#include<cmath>
 #include<iostream>
 #include<iomanip>
 using namespace std;
@@ -65,7 +66,7 @@ static int adjgpsweek(int week) {
 }
 
 //define a function to convert the commontime to the MJDTime
-MJDTime* CommonTimeToMJDTime(CommonTime& common_time)
+inline MJDTime* CommonTimeToMJDTime(CommonTime& common_time)
 {
 	long double JD = 0.0;
 	MJDTime* MJD = new MJDTime();
@@ -92,7 +93,7 @@ MJDTime* CommonTimeToMJDTime(CommonTime& common_time)
 	return MJD;
 }
 //define a function to convert the MJDTime to the commontime
-CommonTime* MJDToCommonTime(MJDTime& MJD)
+inline CommonTime* MJDToCommonTime(MJDTime& MJD)
 {
 	CommonTime* ct = new CommonTime();
 
@@ -132,14 +133,14 @@ CommonTime* MJDToCommonTime(MJDTime& MJD)
 }
 
 //define a function to convert the MJDTime to the GPSTime
-GPSTime* MJDToGPSTime(MJDTime& MJD) {
+inline GPSTime* MJDToGPSTime(MJDTime& MJD) {
 	GPSTime* GPS_Time = new GPSTime();
 	GPS_Time->Week = (int)((MJD.Days + MJD.FracDay - 44244) / 7);
 	GPS_Time->SecOfWeek = (MJD.Days + MJD.FracDay - 44244 - GPS_Time->Week * 7) * 86400.0;
 	return GPS_Time;
 }
 //define a function to convert the GPSTime  to the MJDTime
-MJDTime* GPSTimeToMJD(GPSTime& GPSTime) {
+inline MJDTime* GPSTimeToMJD(GPSTime& GPSTime) {
 	MJDTime* MJD_Time = new MJDTime();
 	double MJD = 44244 + GPSTime.Week * 7 + GPSTime.SecOfWeek / 86400.0;
 	MJD_Time->Days = (int)(MJD);
@@ -147,12 +148,12 @@ MJDTime* GPSTimeToMJD(GPSTime& GPSTime) {
 	return MJD_Time;
 }
 //define a function to convert the GPSTime  to the commontime
-CommonTime* GPSTimeToCommonTime(GPSTime& GPSTime) {
+inline CommonTime* GPSTimeToCommonTime(GPSTime& GPSTime) {
 	MJDTime* MJDTime = GPSTimeToMJD(GPSTime);
 	return MJDToCommonTime(*MJDTime);
 }
 //define a function to convert the commontime  to the GPSTime 
-GPSTime* CommonTimeToGPSTime(CommonTime& CommonTime) {
+inline GPSTime* CommonTimeToGPSTime(CommonTime& CommonTime) {
 	MJDTime* MJDTime = CommonTimeToMJDTime(CommonTime);
 	return MJDToGPSTime(*MJDTime);
 }

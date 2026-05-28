@@ -1,6 +1,8 @@
 #include "decode.h"
 #include "stream_decode.h"
-#include "calculate_location_spped.h"
+#include "satpos.h"
+#include "coordinate.h"
+#include "error_correction.h"
 #include "spp.h"
 #include <cstdlib>
 #include <cstring>

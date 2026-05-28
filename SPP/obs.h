@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdio>
 #include "timeTransform.h"
 #include "define.h"
 #include "matrix.h"
@@ -171,12 +172,15 @@ static string GetSatName(int sat)
 {
     int prn = 0;
     int sys = satsys(sat, &prn);
+    char name[8] = "";
 
     if (sys == SYS_GPS) {
-        return "G" + string(prn < 10 ? "0" : "") + to_string(prn);
+        sprintf_s(name, "G%02d", prn);
+        return string(name);
     }
     else if (sys == SYS_CMP) {
-        return "C" + string(prn < 10 ? "0" : "") + to_string(prn);
+        sprintf_s(name, "C%02d", prn);
+        return string(name);
     }
 
     return "";

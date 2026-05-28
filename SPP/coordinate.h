@@ -26,7 +26,7 @@ struct ENU
 	double U = 0.0;
 };
 //define a finction to convert BLH to XYZ
-XYZ* BLHtoXYZ(BLH& blh, double a /*long axis of ellipsoid in WGS-84*/, double f/*flattening of ellipsoid in WGS-84*/) {
+inline XYZ* BLHtoXYZ(BLH& blh, double a /*long axis of ellipsoid in WGS-84*/, double f/*flattening of ellipsoid in WGS-84*/) {
 	double e_2 = 2 * f - f * f;
 	double sinb = sin(blh.B);
 	double cosb = cos(blh.B);
@@ -41,7 +41,7 @@ XYZ* BLHtoXYZ(BLH& blh, double a /*long axis of ellipsoid in WGS-84*/, double f/
 }
 //define a function to convert XYZ to BLH
 //define a function to calculate B
-double calculate_B(XYZ& xyz, double a /*long axis of ellipsoid in CGCS-2000*/, double f/*flattening of ellipsoid in CGCS-2000*/) {
+inline double calculate_B(XYZ& xyz, double a /*long axis of ellipsoid in CGCS-2000*/, double f/*flattening of ellipsoid in CGCS-2000*/) {
 	double e_2 = 2 * f - f * f;
 	double p = sqrt(xyz.X * xyz.X + xyz.Y * xyz.Y);
 	double tanb_0 = xyz.Z / p;
@@ -54,7 +54,7 @@ double calculate_B(XYZ& xyz, double a /*long axis of ellipsoid in CGCS-2000*/, d
 		tanb_0 = tanb;
 	}
 }
-BLH* XYZtoBLH(XYZ& xyz, double a /*long axis of ellipsoid in CGCS-2000*/, double f/*flattening of ellipsoid in CGCS-2000*/) {
+inline BLH* XYZtoBLH(XYZ& xyz, double a /*long axis of ellipsoid in CGCS-2000*/, double f/*flattening of ellipsoid in CGCS-2000*/) {
 	double e_2 = 2 * f - f * f;
 	BLH* blh = new BLH();
 	blh->B = calculate_B(xyz, a, f);
@@ -63,7 +63,7 @@ BLH* XYZtoBLH(XYZ& xyz, double a /*long axis of ellipsoid in CGCS-2000*/, double
 	blh->H = sqrt(xyz.X * xyz.X + xyz.Y * xyz.Y) / cos(blh->B) - N;
 	return blh;
 }
-ENU* xyz2enu(BLH* blh, double* e)
+inline ENU* xyz2enu(BLH* blh, double* e)
 {
 	ENU* enu = new ENU;
 
@@ -81,7 +81,7 @@ ENU* xyz2enu(BLH* blh, double* e)
 
 	return enu;
 }
-double satazel(BLH*blh,double*e, double* azel)
+inline double satazel(BLH*blh,double*e, double* azel)
 {
 	ENU* enu=new ENU;
 

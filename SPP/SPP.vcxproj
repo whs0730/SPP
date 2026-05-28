@@ -131,7 +131,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="decode.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="satpos.cpp" />
+    <ClCompile Include="spp.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="calculate_location_spped.h" />
@@ -141,6 +144,7 @@
     <ClInclude Include="error_correction.h" />
     <ClInclude Include="matrix.h" />
     <ClInclude Include="obs.h" />
+    <ClInclude Include="satpos.h" />
     <ClInclude Include="spp.h" />
     <ClInclude Include="stream_decode.h" />
     <ClInclude Include="timeTransform.h" />
