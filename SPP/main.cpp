@@ -1,4 +1,4 @@
-#include "decode.h"
+﻿#include "decode.h"
 #include "stream_decode.h"
 #include "satpos.h"
 #include "coordinate.h"
@@ -459,13 +459,20 @@ static bool ShouldOutputSatposEpoch(double tow,
     return true;
 }
 
-// 输出广播星历
-// 位置按参考格式输出为km，速度为m/s，钟差/钟速转成微秒量级。
+// 输出接收时刻的广播星历卫星状态，用于和参考 satpos 文件对照。
+// 位置按参考格式输出为 km，速度为 m/s，钟差/钟速转成微秒量级。
 static void OutputSatposEpoch(ofstream& outSat,
-    const obsd_t* obs0,
-    satpos_t* sats,
+    obsd_t* obs,
+    nav_t* nav,
     int n)
 {
+    if (obs == nullptr || nav == nullptr || n <= 0)
+    {
+        return;
+    }
+
+    const obsd_t* obs0 = &obs[0];
+
     outSat << "* "
         << obs0->time.week << " "
         << fixed << setprecision(3) << obs0->time.sec
@@ -473,15 +480,19 @@ static void OutputSatposEpoch(ofstream& outSat,
 
     for (int i = 0; i < n; i++)
     {
-        satpos_t* sat = &sats[i];
+        obsd_t* ob = &obs[i];
+        eph_t* eph = find_eph(nav, ob->sat);
+        satpos_t sat{};
 
-        if (sat->pos[0] == 0.0 && sat->pos[1] == 0.0 && sat->pos[2] == 0.0)
+        // satpos1.txt 用于和参考卫星位置文件对照，输出接收时刻的广播星历结果；
+        // SPP 解算用的发射时刻改正后卫星状态仍保存在主循环的 sats[] 中。
+        if (!CalculateBroadcastSatState(ob->time, eph, ob->sat, sat))
         {
             continue;
         }
 
         int prn = 0;
-        int sys = satsys(sat->sat, &prn);
+        int sys = satsys(sat.sat, &prn);
 
         char satname[16];
 
@@ -500,16 +511,16 @@ static void OutputSatposEpoch(ofstream& outSat,
 
         outSat << satname << " "
             << fixed << setprecision(6)
-            << sat->pos[0] / 1000.0 << " "
-            << sat->pos[1] / 1000.0 << " "
-            << sat->pos[2] / 1000.0 << " "
+            << sat.pos[0] / 1000.0 << " "
+            << sat.pos[1] / 1000.0 << " "
+            << sat.pos[2] / 1000.0 << " "
             << setprecision(4)
-            << sat->vel[0] << " "
-            << sat->vel[1] << " "
-            << sat->vel[2] << " "
+            << sat.vel[0] << " "
+            << sat.vel[1] << " "
+            << sat.vel[2] << " "
             << setprecision(6)
-            << sat->clk * 1e6 << " "
-            << sat->dclk * 1e6
+            << sat.clk * 1e6 << " "
+            << sat.dclk * 1e6
             << endl;
     }
 }
@@ -635,7 +646,7 @@ int main(int argc, char* argv[])
             continue;
         }
 
-        OutputSatposEpoch(outSat, obs0, sats, raw.obs.n);
+        OutputSatposEpoch(outSat, raw.obs.data, &raw.nav, raw.obs.n);
     }
 
     if (fp != nullptr)

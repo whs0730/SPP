@@ -15,16 +15,34 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="coordinate.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="decode.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="error_correction.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="main.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="matrix.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="obs.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="satpos.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="spp.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="stream_decode.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="timeTransform.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

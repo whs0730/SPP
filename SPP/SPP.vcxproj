@@ -131,13 +131,18 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="coordinate.cpp" />
     <ClCompile Include="decode.cpp" />
+    <ClCompile Include="error_correction.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="matrix.cpp" />
+    <ClCompile Include="obs.cpp" />
     <ClCompile Include="satpos.cpp" />
     <ClCompile Include="spp.cpp" />
+    <ClCompile Include="stream_decode.cpp" />
+    <ClCompile Include="timeTransform.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="calculate_location_spped.h" />
     <ClInclude Include="coordinate.h" />
     <ClInclude Include="decode.h" />
     <ClInclude Include="define.h" />

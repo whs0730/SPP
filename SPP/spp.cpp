@@ -1,4 +1,5 @@
-#include "obs.h"
+﻿#include "obs.h"
+#include <cmath>
 #include "matrix.h"
 #include "define.h"
 #include "error_correction.h"
@@ -55,6 +56,7 @@ double GetPIF(obsd_t* obs,const eph_t* eph=nullptr)
 
     return 0.0;
 }
+// SNR 当前已按 dB-Hz 存入结构体，单独封装便于以后兼容比例存储。
 static double GetSnrDbHz(double snr)
 {
     if (snr == 0)
@@ -64,6 +66,7 @@ static double GetSnrDbHz(double snr)
 
     return snr;
 }
+// GPS/BDS 双频信噪比质量控制，低于 30 dB-Hz 的观测不参与解算。
 static bool PassSnrCheck(const obsd_t& obs)
 {
     int prn = 0;
@@ -102,7 +105,7 @@ static bool PassSnrCheck(const obsd_t& obs)
 
     return true;
 }
-//
+// 根据当前接收机近似坐标进行高度角筛选。
 static bool PassElevationCheck(const satpos_t& sat,
     const double rec_xyz[3],
     double mask_deg = 10.0)
@@ -247,7 +250,7 @@ static bool ComputeElevationRad(const satpos_t& sat,
 // 2. 卫星位置有效
 // 3. 双频PIF有效
 // 4. SNR >= 30 dB-Hz
-// 5. 可选：高度角 >= 10°
+// 5.高度角 >= 10°
 // =====================================================
 bool PassSppBasicCheck(const obsd_t& obs,
     const satpos_t& sat,
@@ -305,16 +308,7 @@ bool PassSppBasicCheck(const obsd_t& obs,
 
     return true;
 }
-
-bool PassSppBasicCheck(const obsd_t& obs,
-    const satpos_t& sat,
-    const double* rec_xyz,
-    bool check_elev)
-{
-    // 兼容旧调用：没有传星历时仍可做GPS IF检查；
-    // BDS TGD相关检查建议使用带eph参数的重载版本。
-    return PassSppBasicCheck(obs, sat, nullptr, rec_xyz, check_elev, nullptr);
-}
+// 构建 SPP 线性化观测方程并求一次最小二乘改正。
 Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int n, int nv)
 {
     Matrix B = zeros(nv, 5);
@@ -426,6 +420,7 @@ Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int
     m[3] = dx;
     return m;
 }
+// 迭代执行最小二乘，直到接收机位置改正量足够小或达到最大迭代次数。
 Matrix* IterativeSolution(obsd_t* obs, satpos_t* sat, const nav_t* nav, double* PIF, int n, int nv, int times = 1, double Threshold = 1e-6)
 {
     Matrix X = zeros(5, 1);
@@ -454,6 +449,7 @@ Matrix* IterativeSolution(obsd_t* obs, satpos_t* sat, const nav_t* nav, double* 
     }
     return m;
 }
+// 预计算可用卫星的 IF 组合伪距，并统计 GPS/BDS 数量。
 void PIF(obsd_t* obs,
     int n,
     satpos_t* sat,
@@ -501,6 +497,7 @@ void PIF(obsd_t* obs,
 
     if (nv) *nv = index;
 }
+// GPS/BDS 双系统 SPP 主函数：先筛选观测，再迭代估计 x/y/z/dtG/dtC。
 bool SPP(obsd_t *obs, int n, const nav_t *nav, sol_t *sol, satpos_t *sat, int *nv)
 {
     if (obs == nullptr || sol == nullptr || sat == nullptr || nv == nullptr)
@@ -558,8 +555,7 @@ bool SPP(obsd_t *obs, int n, const nav_t *nav, sol_t *sol, satpos_t *sat, int *n
     delete[] m;
     return true;
 }
-//******************************* */测速
-// 多普勒转距离率函数
+// 多普勒转距离率函数。
 double DopplerToRangeRate(obsd_t o)
 {
     int prn = 0;
@@ -586,7 +582,7 @@ double DopplerToRangeRate(obsd_t o)
 
     return D_mps;
 }
-// 确定有效星历数量
+// 统计可参与测速的观测数量。
 int CountSpeedObs(obsd_t *obs, satpos_t *sat, int n, sol_t *sol)
 {
     if (obs == nullptr || sat == nullptr || sol == nullptr)
@@ -637,7 +633,7 @@ int CountSpeedObs(obsd_t *obs, satpos_t *sat, int n, sol_t *sol)
 
     return nv;
 }
-// 速度最小二乘求解
+// 速度最小二乘求解，未知数为 Vx、Vy、Vz 和接收机钟速。
 Matrix *SpeedLeastSquares(obsd_t *obs, satpos_t *sat, int n, sol_t *sol, int nv)
 {
     Matrix B = zeros(nv, 4);
@@ -743,6 +739,7 @@ Matrix *SpeedLeastSquares(obsd_t *obs, satpos_t *sat, int n, sol_t *sol, int nv)
 
     return result;
 }
+// 单点测速入口：定位成功后，用多普勒观测估计速度。
 bool SPP_Speed(obsd_t *obs, int n, sol_t *sol, satpos_t *sat, solvel_t *vsol, int *nv)
 {
     if (obs == nullptr || sat == nullptr || sol == nullptr || vsol == nullptr || nv == nullptr)

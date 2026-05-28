@@ -1,6 +1,6 @@
 ﻿#include "decode.h"
-//  工具函数
-// 字节序转换和数据解析工具
+#include <iostream>
+// 字节序转换和数据解析工具：NovAtel 二进制字段采用小端存储。
 static uint8_t U1(const uint8_t* p) { return *p; }
 uint16_t U2(uint8_t* p) { uint16_t u; memcpy(&u, p, 2); return u; }
 static uint32_t U4(uint8_t* p) { uint32_t u; memcpy(&u, p, 4); return u; }
@@ -23,12 +23,14 @@ static uint32_t rtk_crc32(const uint8_t* buff, int len) {
     }
     return crc;
 }
+// OEM3 兼容校验函数，当前主流程主要使用 OEM4 CRC32。
 static uint8_t chksum(const uint8_t* buff, int len) {
     uint8_t sum = 0;
     for (int i = 0; i < len; i++) sum ^= buff[i];
     return sum;
 }
 
+// 将内部卫星编号格式化为常见卫星号，例如 G25、C13。
 string sat2id(int sat)
 {
     int prn = 0;
@@ -60,6 +62,7 @@ string sat2id(int sat)
     }
     return string(buff);
 }
+// 在导航数据表中查找指定卫星的星历。
 eph_t* find_eph(nav_t* nav, int sat)
 {
     for (int i = 0; i < MAXSAT; i++) {
@@ -70,6 +73,7 @@ eph_t* find_eph(nav_t* nav, int sat)
     return nullptr;
 }
 
+// 星历是否具备参与卫星位置计算的基本参数。
 bool has_valid_eph(const eph_t* eph)
 {
     if (!eph) return false;
@@ -394,7 +398,7 @@ static int decode_rangecmpb(raw_t* raw) {
     }
     return 1;
 }
-//解码GPS
+// 解码 GPS 广播星历报文，并写入 nav.eph[sat-1]。
 static int decode_gpsephemb(raw_t* raw)
 {
     uint8_t* p = raw->buff + OEM4HLEN;
@@ -462,7 +466,7 @@ static int decode_gpsephemb(raw_t* raw)
     raw->ephsat = sat;
     return 2;
 }
-//解码BDS星历
+// 解码 BDS 广播星历报文。注意原始 toe/toc 属于 BDT。
 static int decode_bdsephemerisb(raw_t* raw)
 {
     uint8_t* p = raw->buff + OEM4HLEN;
@@ -592,7 +596,7 @@ int sync_oem4(uint8_t* buff, uint8_t data) {
     buff[0] = buff[1]; buff[1] = buff[2]; buff[2] = data;
     return buff[0] == OEM4SYNC1 && buff[1] == OEM4SYNC2 && buff[2] == OEM4SYNC3;
 }
-// 文件输入函数
+// 文件输入：先搜索同步头，再按报文长度读完一帧 OEM4 数据。
 int input_oem4f(raw_t* raw, FILE* fp) {
     int i, data;
 
