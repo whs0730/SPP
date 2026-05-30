@@ -582,6 +582,8 @@ int main(int argc, char* argv[])
     double start_tow = 7 * 3600 + 25 * 60;  // 07:25:00
     const int interval = 600;               // 10分钟
     int last_sat_output_tow = -1;
+    sol_t last_sol{};
+    bool has_last_sol = false;
 
     // =====================================================
     // 2. 主循环：读帧 -> 解码 -> 按历元定位/测速/输出
@@ -623,19 +625,23 @@ int main(int argc, char* argv[])
         satpos_t sats[MAXOBS]{};
         int validSat = ComputeSatellitePositions(raw.obs.data, raw.obs.n, &raw.nav, sats);
 
-        // 2.3 单点定位。当前双系统五参数SPP至少需要5颗有效卫星。
+        // 2.3 单点定位。SPP内部按可用系统自动选择单系统4参数或双系统5参数。
         sol_t sol{};
         int spp_nv = 0;
 
         bool spp_ok = false;
 
-        if (validSat >= 5)
+        if (validSat >= 4)
         {
-            spp_ok = SPP(raw.obs.data, raw.obs.n, &raw.nav, &sol, sats, &spp_nv);
+            const sol_t* init_sol = has_last_sol ? &last_sol : nullptr;
+            spp_ok = SPP(raw.obs.data, raw.obs.n, &raw.nav, &sol, sats, &spp_nv, init_sol);
         }
 
         if (spp_ok && sol.stat == 1)
         {
+            last_sol = sol;
+            has_last_sol = true;
+
             // 2.4 输出定位、测速、ENU误差和用星统计。
             OutputSolutionEpoch(outSol, raw.obs.data, raw.obs.n, &raw.nav,
                 sats, validSat, sol, realtime);

@@ -351,6 +351,40 @@ int SppClockIndex(int sys, SppSolveMode mode)
     return -1;
 }
 
+// 根据上一历元定位结果设置本历元迭代初值；首次定位或上一历元失败时仍从0开始。
+Matrix MakeInitialSppState(SppSolveMode mode, const sol_t* init_sol)
+{
+    Matrix X = zeros(SppUnknownCount(mode), 1);
+    if (init_sol == nullptr || init_sol->stat != 1)
+    {
+        return X;
+    }
+    if (init_sol->XYZ[0] == 0.0 && init_sol->XYZ[1] == 0.0 && init_sol->XYZ[2] == 0.0)
+    {
+        return X;
+    }
+
+    X[0][0] = init_sol->XYZ[0];
+    X[1][0] = init_sol->XYZ[1];
+    X[2][0] = init_sol->XYZ[2];
+
+    if (mode == SPP_MODE_GPS_BDS)
+    {
+        X[3][0] = init_sol->dtr[0];
+        X[4][0] = init_sol->dtr[1];
+    }
+    else if (mode == SPP_MODE_GPS_ONLY)
+    {
+        X[3][0] = init_sol->dtr[0];
+    }
+    else
+    {
+        X[3][0] = init_sol->dtr[1];
+    }
+
+    return X;
+}
+
 // 构建 SPP 线性化观测方程并求一次最小二乘改正。
 Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int n, int nv, SppSolveMode mode)
 {
@@ -462,9 +496,9 @@ Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int
     return m;
 }
 // 迭代执行最小二乘，直到接收机位置改正量足够小或达到最大迭代次数。
-Matrix* IterativeSolution(obsd_t* obs, satpos_t* sat, const nav_t* nav, int n, int nv, SppSolveMode mode, int times = 1, double Threshold = 1e-6)
+Matrix* IterativeSolution(obsd_t* obs, satpos_t* sat, const nav_t* nav, int n, int nv, SppSolveMode mode, const sol_t* init_sol, int times = 1, double Threshold = 1e-6)
 {
-    Matrix X = zeros(SppUnknownCount(mode), 1);
+    Matrix X = MakeInitialSppState(mode, init_sol);
     Matrix *m = nullptr; // X,B,w
     while (times <= 10)
     {
@@ -539,7 +573,7 @@ void PIF(obsd_t* obs,
     if (nv) *nv = index;
 }
 // SPP 主函数：双系统估计 x/y/z/dtG/dtC，单系统估计 x/y/z/dt。
-bool SPP(obsd_t *obs, int n, const nav_t *nav, sol_t *sol, satpos_t *sat, int *nv)
+bool SPP(obsd_t *obs, int n, const nav_t *nav, sol_t *sol, satpos_t *sat, int *nv, const sol_t* init_sol)
 {
     if (obs == nullptr || sol == nullptr || sat == nullptr || nv == nullptr)
     {
@@ -572,7 +606,7 @@ bool SPP(obsd_t *obs, int n, const nav_t *nav, sol_t *sol, satpos_t *sat, int *n
         return false;
     }
     // 迭代解算
-    Matrix *m = IterativeSolution(obs, sat, nav, n, *nv, mode);
+    Matrix *m = IterativeSolution(obs, sat, nav, n, *nv, mode, init_sol);
     if (m == nullptr)
     {
         sol->stat = 0;

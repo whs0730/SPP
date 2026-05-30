@@ -23,7 +23,8 @@ bool SPP(obsd_t* obs,
     const nav_t* nav,
     sol_t* sol,
     satpos_t* sat,
-    int* nv);
+    int* nv,
+    const sol_t* init_sol = nullptr);
 
 // 单点测速主入口，使用多普勒观测估计接收机速度和钟速。
 bool SPP_Speed(obsd_t* obs,
