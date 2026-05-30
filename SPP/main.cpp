@@ -16,6 +16,7 @@ using namespace std;
 static const char* DEFAULT_INPUT_FILE = "NovatelOEM20211114-01.log";
 // 实时模式：SPP.exe --stream [ip] [port]。
 // 不带 --stream 时，argv[1] 按 OEM4 二进制日志文件处理。
+//参考坐标(-2267810.173，5009324.109，3221016.632)
 static const char* DEFAULT_STREAM_IP = "8.148.22.229";
 static const unsigned short DEFAULT_STREAM_PORT = 7003;
 

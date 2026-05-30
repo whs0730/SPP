@@ -308,10 +308,54 @@ bool PassSppBasicCheck(const obsd_t& obs,
 
     return true;
 }
-// 构建 SPP 线性化观测方程并求一次最小二乘改正。
-Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int n, int nv)
+//添加历元卫星种类类型：单系统和多系统
+enum SppSolveMode
 {
-    Matrix B = zeros(nv, 5);
+    SPP_MODE_GPS_ONLY,
+    SPP_MODE_BDS_ONLY,
+    SPP_MODE_GPS_BDS
+};
+//判断构造矩阵的维数
+int SppUnknownCount(SppSolveMode mode)
+{
+    return mode == SPP_MODE_GPS_BDS ? 5 : 4;
+}
+//判断是否是GPS和BDS，因为只支持双系统观目前
+bool IsSppSystemUsed(int sys, SppSolveMode mode)
+{
+    if (mode == SPP_MODE_GPS_BDS)
+    {
+        return sys == SYS_GPS || sys == SYS_CMP;
+    }
+    if (mode == SPP_MODE_GPS_ONLY)
+    {
+        return sys == SYS_GPS;
+    }
+    return sys == SYS_CMP;
+}
+//设置最小二乘矩阵最后一列
+int SppClockIndex(int sys, SppSolveMode mode)
+{
+    if (mode != SPP_MODE_GPS_BDS)
+    {
+        return 3;
+    }
+    if (sys == SYS_GPS)
+    {
+        return 3;
+    }
+    if (sys == SYS_CMP)
+    {
+        return 4;
+    }
+    return -1;
+}
+
+// 构建 SPP 线性化观测方程并求一次最小二乘改正。
+Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int n, int nv, SppSolveMode mode)
+{
+    int nx = SppUnknownCount(mode);
+    Matrix B = zeros(nv, nx);
     Matrix w = zeros(nv, 1);
     int index = 0;
     for (int i = 0; i < n; i++)
@@ -322,6 +366,14 @@ Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int
 
         double pif_check = 0.0;
         if (!PassSppBasicCheck(obs[i], s, eph, nullptr, false, &pif_check))
+        {
+            continue;
+        }
+
+        int prn = 0;
+        int sys = satsys(obs[i].sat, &prn);
+        //判断是否有可用卫星
+        if (!IsSppSystemUsed(sys, mode))
         {
             continue;
         }
@@ -370,31 +422,20 @@ Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int
             return nullptr;
         }
         double B1 = -delX / p, B2 = -delY / p, B3 = -delZ / p;
-        double rec_clk = 0.0;
-        int prn = 0;
-        int sys = satsys(obs[i].sat, &prn);
-        if (sys == SYS_GPS)
+        int clk_index = SppClockIndex(sys, mode);
+        if (clk_index < 0)
         {
-            B[index][0] = B1;
-            B[index][1] = B2;
-            B[index][2] = B3;
-            B[index][3] = 1.0;
-            B[index][4] = 0.0;
-            rec_clk = X[3][0];
+            continue;
         }
-        else if (sys == SYS_CMP)
-        {
-            B[index][0] = B1;
-            B[index][1] = B2;
-            B[index][2] = B3;
-            B[index][3] = 0.0;
-            B[index][4] = 1.0;
-            rec_clk = X[4][0];
-        }
+        B[index][0] = B1;
+        B[index][1] = B2;
+        B[index][2] = B3;
+        B[index][clk_index] = 1.0;
+        double rec_clk = X[clk_index][0];
         w[index][0] = pif_check - (p + rec_clk - Clight * s.clk + Trop);
         index++;
     }
-    if (index < 5)
+    if (index < nx)
     {
         return nullptr;
     }
@@ -421,9 +462,9 @@ Matrix* LeastSquares(Matrix X, obsd_t* obs, satpos_t* sat, const nav_t* nav, int
     return m;
 }
 // 迭代执行最小二乘，直到接收机位置改正量足够小或达到最大迭代次数。
-Matrix* IterativeSolution(obsd_t* obs, satpos_t* sat, const nav_t* nav, double* PIF, int n, int nv, int times = 1, double Threshold = 1e-6)
+Matrix* IterativeSolution(obsd_t* obs, satpos_t* sat, const nav_t* nav, int n, int nv, SppSolveMode mode, int times = 1, double Threshold = 1e-6)
 {
-    Matrix X = zeros(5, 1);
+    Matrix X = zeros(SppUnknownCount(mode), 1);
     Matrix *m = nullptr; // X,B,w
     while (times <= 10)
     {
@@ -432,7 +473,7 @@ Matrix* IterativeSolution(obsd_t* obs, satpos_t* sat, const nav_t* nav, double* 
             delete[] m;
             m = nullptr;
         }
-        m = LeastSquares(X, obs, sat, nav,n, nv);
+        m = LeastSquares(X, obs, sat, nav,n, nv, mode);
         if (m == nullptr)
         {
             return nullptr;
@@ -497,28 +538,41 @@ void PIF(obsd_t* obs,
 
     if (nv) *nv = index;
 }
-// GPS/BDS 双系统 SPP 主函数：先筛选观测，再迭代估计 x/y/z/dtG/dtC。
+// SPP 主函数：双系统估计 x/y/z/dtG/dtC，单系统估计 x/y/z/dt。
 bool SPP(obsd_t *obs, int n, const nav_t *nav, sol_t *sol, satpos_t *sat, int *nv)
 {
     if (obs == nullptr || sol == nullptr || sat == nullptr || nv == nullptr)
     {
         return false;
     }
-    double X0 = 0.0, Y0 = 0.0, Z0 = 0.0; // 位置初始化
-    int times = 0;
     double *pif = new double[n];
     int a = 0;
     int b = 0;
     // 计算双频组合观测值
     PIF(obs, n, sat, nav, nv, pif, &a, &b);
-    if (*nv < 5 || a <= 0 || b <= 0)
+    SppSolveMode mode = SPP_MODE_GPS_BDS;
+    if (a > 0 && b > 0 && *nv >= 5)
+    {
+        mode = SPP_MODE_GPS_BDS;
+    }
+    else if (a >= 4)
+    {
+        mode = SPP_MODE_GPS_ONLY;
+        *nv = a;
+    }
+    else if (b >= 4)
+    {
+        mode = SPP_MODE_BDS_ONLY;
+        *nv = b;
+    }
+    else
     {
         sol->stat = 0;
         delete[] pif;
         return false;
     }
     // 迭代解算
-    Matrix *m = IterativeSolution(obs, sat, nav,pif, n, *nv);
+    Matrix *m = IterativeSolution(obs, sat, nav, n, *nv, mode);
     if (m == nullptr)
     {
         sol->stat = 0;
@@ -533,9 +587,10 @@ bool SPP(obsd_t *obs, int n, const nav_t *nav, sol_t *sol, satpos_t *sat, int *n
     Matrix v = sub(mul(B, dx), w); // 残差
     double vtv = mul(transpose(v), v)[0][0];
     double sigma0 = 0.0;
-    if (*nv > 5)
+    int nx = SppUnknownCount(mode);
+    if (*nv > nx)
     {
-        sigma0 = sqrt(vtv / double(*nv - 5));
+        sigma0 = sqrt(vtv / double(*nv - nx));
     }
     Matrix Qxx = inverse(mul(transpose(B), B));
     Matrix Dxx = scalar_mul(sigma0*sigma0, Qxx);
@@ -544,8 +599,21 @@ bool SPP(obsd_t *obs, int n, const nav_t *nav, sol_t *sol, satpos_t *sat, int *n
     sol->XYZ[0] = X[0][0];
     sol->XYZ[1] = X[1][0];
     sol->XYZ[2] = X[2][0];
-    sol->dtr[0] = X[3][0]; // GPS
-    sol->dtr[1] = X[4][0]; // BDS
+    sol->dtr[0] = 0.0;
+    sol->dtr[1] = 0.0;
+    if (mode == SPP_MODE_GPS_BDS)
+    {
+        sol->dtr[0] = X[3][0]; // GPS
+        sol->dtr[1] = X[4][0]; // BDS
+    }
+    else if (mode == SPP_MODE_GPS_ONLY)
+    {
+        sol->dtr[0] = X[3][0]; // GPS
+    }
+    else
+    {
+        sol->dtr[1] = X[3][0]; // BDS
+    }
     sol->Q = Qxx;
     sol->pdop = PDOP;
     sol->sigma0 = sigma0;
