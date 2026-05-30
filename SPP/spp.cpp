@@ -4,8 +4,6 @@
 #include "define.h"
 #include "error_correction.h"
 // 计算双频无电离层组合伪距。
-// GPS L1/L2 IF组合不额外处理TGD；
-// BDS B1I/B3I的TGD在这里改到伪距观测值上，不放进卫星钟差。
 double GetPIF(obsd_t* obs,const eph_t* eph=nullptr)
 {
     if (obs == nullptr)
@@ -33,7 +31,6 @@ double GetPIF(obsd_t* obs,const eph_t* eph=nullptr)
     else if (sys == SYS_CMP)
     {
         // BDS B1I + B3I
-        // 注意：B3I 按老师的 Freq=1 存在 P[1]
         if (obs->P[0] == 0.0 || obs->P[1] == 0.0)
         {
             return 0.0;
@@ -42,7 +39,7 @@ double GetPIF(obsd_t* obs,const eph_t* eph=nullptr)
         double f1 = FREQ_BDS_B1;
         double f3 = FREQ_BDS_B3;
         double P1 = obs->P[0];  // B1I
-        double P3 = obs->P[1];  // B3I，按你的代码存在 P[1]
+        double P3 = obs->P[1];  // B3I
         // BDS B1I 要改 TGD，B3I 不改。
         // TGD 单位是秒，乘光速变成米；这里处理后，后续最小二乘直接使用IF伪距。
         if (eph != nullptr)
@@ -83,7 +80,7 @@ static bool PassSnrCheck(const obsd_t& obs)
     }
     else if (sys == SYS_CMP)
     {
-        // BDS B1I + B3I，现在你已经按老师方式存在 P[0]/P[1]
+        // BDS B1I + B3I
         snr1 = GetSnrDbHz(obs.SNR[0]);
         snr2 = GetSnrDbHz(obs.SNR[1]);
     }
@@ -195,7 +192,7 @@ const eph_t* GetSppEph(const nav_t* nav, int sat)
 }
 
 // 计算当前接收机位置下的卫星高度角，单位为弧度。
-// 高度角筛选、对流层改正和最终用星统计都复用这个函数。
+// 高度角筛选、对流层改正和最终用星统计复用
 static bool ComputeElevationRad(const satpos_t& sat,
     const double rec_xyz[3],
     double& elev_rad)
@@ -274,8 +271,8 @@ bool PassSppBasicCheck(const obsd_t& obs,
         return false;
     }
 
-    // 统一在这里计算双频无电离层组合。
-    // BDS的TGD改正在GetPIF()内部完成，因此预筛和最小二乘使用同一个PIF值。
+    // 统一计算双频无电离层组合。
+    // BDS的TGD改正在GetPIF()内部完成
     double pif = GetPIF((obsd_t*)&obs, eph);
     if (pif == 0.0)
     {
@@ -300,7 +297,6 @@ bool PassSppBasicCheck(const obsd_t& obs,
         }
     }
 
-    // 调用方如果需要PIF数值，可以直接取走，避免重复计算造成不一致。
     if (pif_out != nullptr)
     {
         *pif_out = pif;
@@ -320,7 +316,7 @@ int SppUnknownCount(SppSolveMode mode)
 {
     return mode == SPP_MODE_GPS_BDS ? 5 : 4;
 }
-//判断是否是GPS和BDS，因为只支持双系统观目前
+//判断是否是GPS和BDS
 bool IsSppSystemUsed(int sys, SppSolveMode mode)
 {
     if (mode == SPP_MODE_GPS_BDS)
