@@ -156,6 +156,34 @@ static void WriteSolutionHeader(ofstream& outSol)
         << endl;
 }
 
+// 实时流解算摘要：控制台和 stream.txt 复用同一格式，避免两处输出不一致。
+static void OutputStreamSolutionEpoch(ostream& out,
+    const obsd_t* obs0,
+    const sol_t& sol,
+    const ENU* enu,
+    int used_n)
+{
+    if (obs0 == nullptr || enu == nullptr)
+    {
+        return;
+    }
+
+    out << fixed
+        << "Wk " << obs0->time.week
+        << " SOW " << setprecision(3) << obs0->time.sec
+        << " XYZ "
+        << setprecision(4) << sol.XYZ[0] << " "
+        << sol.XYZ[1] << " "
+        << sol.XYZ[2]
+        << " ENU "
+        << setprecision(3) << enu->E << " "
+        << enu->N << " "
+        << enu->U
+        << " n=" << used_n
+        << " PDOP=" << sol.pdop
+        << endl;
+}
+
 // 输出Novatel原始观测值。
 // 这里输出第一频点的伪距、载波、多普勒和SNR，主要用于检查解码是否正常。
 static void OutputObservationEpoch(ofstream& outObs, const obs_t& obs_set)
@@ -314,7 +342,8 @@ static void OutputSolutionEpoch(ofstream& outSol,
     satpos_t* sats,
     int validSat,
     const sol_t& sol,
-    bool realtime)
+    bool realtime,
+    ostream* outStream)
 {
     obsd_t* obs0 = &obs[0];
 
@@ -406,20 +435,11 @@ static void OutputSolutionEpoch(ofstream& outSol,
 
     if (realtime)
     {
-        cout << fixed
-            << "Wk " << obs0->time.week
-            << " SOW " << setprecision(3) << obs0->time.sec
-            << " XYZ "
-            << setprecision(4) << sol.XYZ[0] << " "
-            << sol.XYZ[1] << " "
-            << sol.XYZ[2]
-            << " ENU "
-            << setprecision(3) << enu->E << " "
-            << enu->N << " "
-            << enu->U
-            << " n=" << used_n
-            << " PDOP=" << sol.pdop
-            << endl;
+        OutputStreamSolutionEpoch(cout, obs0, sol, enu, used_n);
+        if (outStream != nullptr)
+        {
+            OutputStreamSolutionEpoch(*outStream, obs0, sol, enu, used_n);
+        }
     }
 
     delete solBLH;
@@ -569,11 +589,20 @@ int main(int argc, char* argv[])
     ofstream outSat("satpos1.txt");
     ofstream outSol("spp_solution.txt");
     ofstream outRaw;
+    ofstream outStream;
 
     if (realtime)
     {
         // 保存实时接收到的有效 OEM4 观测/星历报文，后续可按文件模式回放。
         outRaw.open("realtime_raw_oem.log", ios::binary);
+
+        // 保存实时解算摘要，内容与控制台实时输出保持一致。
+        outStream.open("stream.txt");
+        if (!outStream.is_open())
+        {
+            cerr << "Cannot open stream.txt" << endl;
+            return -1;
+        }
     }
 
     WriteSolutionHeader(outSol);
@@ -644,7 +673,8 @@ int main(int argc, char* argv[])
 
             // 2.4 输出定位、测速、ENU误差和用星统计。
             OutputSolutionEpoch(outSol, raw.obs.data, raw.obs.n, &raw.nav,
-                sats, validSat, sol, realtime);
+                sats, validSat, sol, realtime,
+                realtime && outStream.is_open() ? &outStream : nullptr);
         }
 
         // 2.5 卫星位置文件只做低频抽样输出，用于和参考satpos格式对照。
@@ -667,6 +697,10 @@ int main(int argc, char* argv[])
     if (outRaw.is_open())
     {
         outRaw.close();
+    }
+    if (outStream.is_open())
+    {
+        outStream.close();
     }
 
     cout << (realtime ? "Realtime processing finished." : "Finished processing.") << endl;
