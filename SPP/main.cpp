@@ -16,14 +16,20 @@ using namespace std;
 static const char* DEFAULT_INPUT_FILE = "NovatelOEM20211114-01.log";
 // 实时模式：SPP.exe --stream [ip] [port]。
 // 不带 --stream 时，argv[1] 按 OEM4 二进制日志文件处理。
-//参考坐标(-2267810.173，5009324.109，3221016.632)
 static const char* DEFAULT_STREAM_IP = "8.148.22.229";
 static const unsigned short DEFAULT_STREAM_PORT = 7003;
 
 // 离线结果精度分析使用的参考坐标，与 NovatelOEM20211114-01.pos 中的 REF-ECEF 保持一致。
-static const double REF_X = -2267804.5260;
-static const double REF_Y = 5009342.3720;
-static const double REF_Z = 3220991.8630;
+static const double OFFLINE_REF_X = -2267804.5260;
+static const double OFFLINE_REF_Y = 5009342.3720;
+static const double OFFLINE_REF_Z = 3220991.8630;
+
+// 实时流测站参考坐标，来自老师提供的“实时流测站参考坐标.txt”。
+static const double STREAM_REF_X = -2267810.173;
+static const double STREAM_REF_Y = 5009324.109;
+static const double STREAM_REF_Z = 3221016.632;
+
+static const double MAX_EPH_AGE_SEC = 7200.0;
 
 void CountSolutionSats(obsd_t* obs,
     satpos_t* sats,
@@ -314,6 +320,11 @@ static int ComputeSatellitePositions(obsd_t* obs,
             continue;
         }
 
+        if (fabs(timediff(ob->time, eph->toe)) > MAX_EPH_AGE_SEC)
+        {
+            continue;
+        }
+
         int prn = 0;
         int sys = satsys(ob->sat, &prn);
         if (sys != SYS_GPS && sys != SYS_CMP)
@@ -358,17 +369,21 @@ static void OutputSolutionEpoch(ofstream& outSol,
     double L_deg = solBLH->L * 180.0 / PI;
     double H_m = solBLH->H;
 
+    double ref_x = realtime ? STREAM_REF_X : OFFLINE_REF_X;
+    double ref_y = realtime ? STREAM_REF_Y : OFFLINE_REF_Y;
+    double ref_z = realtime ? STREAM_REF_Z : OFFLINE_REF_Z;
+
     XYZ refXYZ;
-    refXYZ.X = REF_X;
-    refXYZ.Y = REF_Y;
-    refXYZ.Z = REF_Z;
+    refXYZ.X = ref_x;
+    refXYZ.Y = ref_y;
+    refXYZ.Z = ref_z;
 
     BLH* refBLH = XYZtoBLH(refXYZ, 6378137.0, 1.0 / 298.257223563);
 
     double dxyz[3];
-    dxyz[0] = sol.XYZ[0] - REF_X;
-    dxyz[1] = sol.XYZ[1] - REF_Y;
-    dxyz[2] = sol.XYZ[2] - REF_Z;
+    dxyz[0] = sol.XYZ[0] - ref_x;
+    dxyz[1] = sol.XYZ[1] - ref_y;
+    dxyz[2] = sol.XYZ[2] - ref_z;
 
     ENU* enu = xyz2enu(refBLH, dxyz);
 
@@ -407,9 +422,9 @@ static void OutputSolutionEpoch(ofstream& outSol,
         << setw(14) << setprecision(4) << sol.XYZ[1] << " "
         << setw(14) << setprecision(4) << sol.XYZ[2] << "  "
 
-        << setw(14) << setprecision(4) << REF_X << " "
-        << setw(14) << setprecision(4) << REF_Y << " "
-        << setw(14) << setprecision(4) << REF_Z << "  "
+        << setw(14) << setprecision(4) << ref_x << " "
+        << setw(14) << setprecision(4) << ref_y << " "
+        << setw(14) << setprecision(4) << ref_z << "  "
 
         << setw(7) << setprecision(3) << enu->E << " "
         << setw(8) << setprecision(3) << enu->N << " "
@@ -429,7 +444,7 @@ static void OutputSolutionEpoch(ofstream& outSol,
 
         << setw(3) << gps_count << " "
         << setw(3) << bds_count << " "
-        << setw(3) << validSat << " "
+        << setw(3) << sol.ns << " "
         << sat_list
         << endl;
 
