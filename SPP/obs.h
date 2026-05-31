@@ -62,15 +62,15 @@ struct eph_t {
 // 导航数据集合。
 struct nav_t {
     eph_t eph[MAXSAT];
-    double ion_gps[8];
-    double utc_gps[8];
+    double ion_gps[8]; //GPS Klobuchar 电离层模型参数
+    double utc_gps[8]; //
     int glo_fcn[32];
 };
 
 // 卫星状态计算结果。
 struct satpos_t {
     int sat;
-    gtime_t time;
+    gtime_t time;      //发射时刻
 
     double pos[3];      // ECEF 坐标，单位：m
     double vel[3];      // ECEF 速度，单位：m/s
@@ -101,8 +101,12 @@ struct solvel_t {
     int ns;             // 参与测速卫星数
     int stat;           // 0 失败，1 成功
 };
-
+//根据卫星系统和prn计算卫星号
 int satno(int sys, int prn);
+
+// 根据内部 sat 编号反推出卫星系统和系统内 PRN。
 int satsys(int sat, int* prn);
+// 将内部卫星编号转换为 Gxx/Cxx 等输出名称。
+string sat2id(int sat);
 string GetSatName(int sat);
 bool IsValidSatpos(satpos_t* sat);

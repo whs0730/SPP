@@ -8,8 +8,8 @@
 
 #include "obs.h"
 
-// NovAtel OEM4 原始数据状态。
-// 保存当前报文缓冲区、已解码观测值、导航星历和跨历元辅助状态。
+// NovAtel OEM4 原始数据状态
+// 保存当前报文缓冲区、已解码观测值、导航星历和跨历元辅助状态
 class raw_t {
 public:
     gtime_t time;                               // 当前报文时间
@@ -47,8 +47,7 @@ public:
     }
 };
 
-// 将内部卫星编号转换为 Gxx/Cxx 等输出名称。
-string sat2id(int sat);
+
 
 // 按内部卫星编号查找当前导航数据中的广播星历。
 eph_t* find_eph(nav_t* nav, int sat);

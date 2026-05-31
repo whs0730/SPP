@@ -222,10 +222,7 @@ static void OutputObservationEpoch(ofstream& outObs, const obs_t& obs_set)
 // 按卫星系统调用广播星历计算函数。
 // 注意：本工程解码时已经把BDS星历toe/toc从BDT转换为GPST，
 // 因此这里GPS和BDS都传入GPST时刻；BDS轨道项需要的原始BDT秒保存在eph->toes中。
-static bool CalculateBroadcastSatState(gtime_t calc_time,
-    eph_t* eph,
-    int sat_no,
-    satpos_t& sat)
+static bool CalculateBroadcastSatState(gtime_t calc_time,eph_t* eph,int sat_no,satpos_t& sat)
 {
     if (!has_valid_eph(eph))
     {
@@ -267,9 +264,7 @@ static bool CalculateBroadcastSatState(gtime_t calc_time,
 // 2. 得到近似发射时刻，并计算一次卫星钟差；
 // 3. 用卫星钟差修正发射时刻，再重新计算卫星位置、速度、钟差、钟速；
 // 4. 按传播时间做地球自转改正。
-static bool ComputeSatStateAtTransmitTime(const obsd_t& obs,
-    eph_t* eph,
-    satpos_t& sat)
+static bool CaculateSatStateAtTransmitTime(const obsd_t& obs,eph_t* eph,satpos_t& sat)
 {
     double pif = GetPIF((obsd_t*)&obs, eph);
     if (pif <= 0.0)
@@ -303,10 +298,7 @@ static bool ComputeSatStateAtTransmitTime(const obsd_t& obs,
 
 // 对当前历元每颗卫星计算位置、速度、钟差和钟速。
 // validSat统计的是“有可用星历且成功算出发射时刻卫星状态”的GPS/BDS卫星数，
-static int ComputeSatellitePositions(obsd_t* obs,
-    int n,
-    nav_t* nav,
-    satpos_t* sats)
+static int CaculateSatellitePositions(obsd_t* obs,int n,nav_t* nav,satpos_t* sats)
 {
     int validSat = 0;
 
@@ -319,7 +311,7 @@ static int ComputeSatellitePositions(obsd_t* obs,
         {
             continue;
         }
-
+        //卫星
         if (fabs(timediff(ob->time, eph->toe)) > MAX_EPH_AGE_SEC)
         {
             continue;
@@ -333,7 +325,7 @@ static int ComputeSatellitePositions(obsd_t* obs,
         }
 
         satpos_t sat{};
-        if (!ComputeSatStateAtTransmitTime(*ob, eph, sat))
+        if (!CaculateSatStateAtTransmitTime(*ob, eph, sat))
         {
             continue;
         }
@@ -667,7 +659,7 @@ int main(int argc, char* argv[])
 
         // 2.2 根据当前历元观测和已解码星历计算卫星状态。
         satpos_t sats[MAXOBS]{};
-        int validSat = ComputeSatellitePositions(raw.obs.data, raw.obs.n, &raw.nav, sats);
+        int validSat = CaculateSatellitePositions(raw.obs.data, raw.obs.n, &raw.nav, sats);
 
         // 2.3 单点定位。SPP内部按可用系统自动选择单系统4参数或双系统5参数。
         sol_t sol{};

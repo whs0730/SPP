@@ -30,38 +30,7 @@ static uint8_t chksum(const uint8_t* buff, int len) {
     return sum;
 }
 
-// 将内部卫星编号格式化为常见卫星号，例如 G25、C13。
-string sat2id(int sat)
-{
-    int prn = 0;
-    int sys = satsys(sat, &prn);
-    char buff[16] = { 0 };
 
-    switch (sys) {
-    case SYS_GPS:
-        sprintf_s(buff, "G%02d", prn);
-        break;
-    case SYS_GLO:
-        sprintf_s(buff, "R%02d", prn);
-        break;
-    case SYS_GAL:
-        sprintf_s(buff, "E%02d", prn);
-        break;
-    case SYS_QZS:
-        sprintf_s(buff, "J%02d", prn);
-        break;
-    case SYS_CMP:
-        sprintf_s(buff, "C%02d", prn);
-        break;
-    case SYS_IRN:
-        sprintf_s(buff, "I%02d", prn);
-        break;
-    default:
-        sprintf_s(buff, "%03d", sat);
-        break;
-    }
-    return string(buff);
-}
 // 在导航数据表中查找指定卫星的星历。
 eph_t* find_eph(nav_t* nav, int sat)
 {

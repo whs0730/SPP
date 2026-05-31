@@ -22,4 +22,5 @@ XYZ* BLHtoXYZ(BLH& blh, double a, double f);
 double calculate_B(XYZ& xyz, double a, double f);
 BLH* XYZtoBLH(XYZ& xyz, double a, double f);
 ENU* xyz2enu(BLH* blh, double* e);
+// 由站点位置和视线单位向量计算方位角、高度角
 double satazel(BLH* blh, double* e, double* azel);

@@ -1,50 +1,58 @@
 #include "stream_decode.h"
 
-#include <iostream>
+#include <cstring>
+#include <windows.h>
+
+#pragma warning(disable:4996)
+
+static bool OpenSocket(SOCKET& sock, const char IP[], const unsigned short Port)
+{
+    WSADATA wsaData;
+    SOCKADDR_IN addrSrv;
+
+    if (!WSAStartup(MAKEWORD(1, 1), &wsaData))
+    {
+        if ((sock = socket(AF_INET, SOCK_STREAM, 0)) != INVALID_SOCKET)
+        {
+            addrSrv.sin_addr.S_un.S_addr = inet_addr(IP);
+            addrSrv.sin_family = AF_INET;
+            addrSrv.sin_port = htons(Port);
+            if (connect(sock, (SOCKADDR*)&addrSrv, sizeof(SOCKADDR)) == SOCKET_ERROR)
+            {
+                closesocket(sock);
+                sock = INVALID_SOCKET;
+                WSACleanup();
+                return false;
+            }
+            return true;
+        }
+        WSACleanup();
+    }
+    return false;
+}
+
+static void CloseSocket(SOCKET& sock)
+{
+    closesocket(sock);
+    WSACleanup();
+}
 
 TcpOem4Stream::~TcpOem4Stream()
 {
     Close();
 }
 
-// 打开实时 TCP 数据流，成功后后续按字节读取 OEM4 数据。
 bool TcpOem4Stream::Open(const char* ip, unsigned short port, int recv_timeout_ms)
 {
     Close();
 
-    WSADATA wsa_data{};
-    int wsa_ret = WSAStartup(MAKEWORD(2, 2), &wsa_data);
-    if (wsa_ret != 0) {
-        last_error_ = "WSAStartup failed: " + std::to_string(wsa_ret);
+    if (!OpenSocket(sock_, ip, port)) {
+        SetLastSocketError("OpenSocket failed");
+        Close();
         return false;
     }
     wsa_started_ = true;
 
-    sock_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock_ == INVALID_SOCKET) {
-        SetLastSocketError("socket failed");
-        Close();
-        return false;
-    }
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-
-    if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1) {
-        last_error_ = "invalid IPv4 address: ";
-        last_error_ += ip;
-        Close();
-        return false;
-    }
-
-    if (connect(sock_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
-        SetLastSocketError("connect failed");
-        Close();
-        return false;
-    }
-
-    // 设置接收超时，避免实时流中断时一直阻塞。
     setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO,
         reinterpret_cast<const char*>(&recv_timeout_ms), sizeof(recv_timeout_ms));
 
@@ -52,27 +60,20 @@ bool TcpOem4Stream::Open(const char* ip, unsigned short port, int recv_timeout_m
     return true;
 }
 
-// 关闭 socket，并在需要时释放 Winsock 环境。
 void TcpOem4Stream::Close()
 {
-    if (sock_ != INVALID_SOCKET) {
-        closesocket(sock_);
+    if (sock_ != INVALID_SOCKET || wsa_started_) {
+        CloseSocket(sock_);
         sock_ = INVALID_SOCKET;
-    }
-
-    if (wsa_started_) {
-        WSACleanup();
         wsa_started_ = false;
     }
 }
 
-// 读取单个字节，供同步头扫描使用。
 bool TcpOem4Stream::ReadByte(uint8_t* data)
 {
     return ReadExact(data, 1);
 }
 
-// 循环读取指定长度的数据，直到读满或出现网络错误。
 bool TcpOem4Stream::ReadExact(uint8_t* data, int len)
 {
     if (data == nullptr || len <= 0 || sock_ == INVALID_SOCKET) {
@@ -105,55 +106,146 @@ bool TcpOem4Stream::ReadExact(uint8_t* data, int len)
     return true;
 }
 
+int TcpOem4Stream::RecvPacket(uint8_t* data, int max_len, int sleep_ms)
+{
+    if (data == nullptr || max_len <= 0 || sock_ == INVALID_SOCKET) {
+        last_error_ = "stream is not open";
+        return -1;
+    }
+
+    if (sleep_ms > 0) {
+        Sleep(sleep_ms);
+    }
+
+    int n = recv(sock_, reinterpret_cast<char*>(data), max_len, 0);
+    if (n > 0) {
+        return n;
+    }
+
+    if (n == 0) {
+        last_error_ = "remote host closed the connection";
+        return -1;
+    }
+
+    int err = WSAGetLastError();
+    if (err == WSAEINTR || err == WSAETIMEDOUT || err == WSAEWOULDBLOCK) {
+        return 0;
+    }
+
+    last_error_ = "recv failed: " + std::to_string(err);
+    return -1;
+}
+
 const std::string& TcpOem4Stream::LastError() const
 {
     return last_error_;
 }
 
-// 记录最近一次 socket 错误，便于主函数输出具体原因。
 void TcpOem4Stream::SetLastSocketError(const char* prefix)
 {
     last_error_ = std::string(prefix) + ": " + std::to_string(WSAGetLastError());
 }
 
-// 实时输入逻辑：扫描同步头、读取完整报文、交给 decode_oem4() 解码。
+static bool TryDecodeOem4FromStreamBuff(raw_t* raw, uint8_t* Buff, int& lenD, int& ReadFlag)
+{
+    if (raw == nullptr) {
+        ReadFlag = -2;
+        return true;
+    }
+
+    while (lenD >= 3) {
+        int sync_pos = -1;
+
+        for (int i = 0; i <= lenD - 3; i++) {
+            if (Buff[i] == OEM4SYNC1 &&
+                Buff[i + 1] == OEM4SYNC2 &&
+                Buff[i + 2] == OEM4SYNC3) {
+                sync_pos = i;
+                break;
+            }
+        }
+
+        if (sync_pos < 0) {
+            Buff[0] = Buff[lenD - 2];
+            Buff[1] = Buff[lenD - 1];
+            lenD = 2;
+            return false;
+        }
+
+        if (sync_pos > 0) {
+            lenD -= sync_pos;
+            memmove(Buff, Buff + sync_pos, lenD);
+        }
+
+        if (lenD < 10) {
+            return false;
+        }
+
+        raw->len = U2(Buff + 8) + OEM4HLEN;
+        if (raw->len > MAXRAWLEN - 4) {
+            lenD--;
+            memmove(Buff, Buff + 1, lenD);
+            raw->nbyte = 0;
+            ReadFlag = -1;
+            return true;
+        }
+
+        int frame_len = raw->len + 4;
+        if (lenD < frame_len) {
+            return false;
+        }
+
+        memcpy(raw->buff, Buff, frame_len);
+        raw->nbyte = 0;
+
+        lenD -= frame_len;
+        if (lenD > 0) {
+            memmove(Buff, Buff + frame_len, lenD);
+        }
+
+        ReadFlag = decode_oem4(raw);
+        return true;
+    }
+
+    return false;
+}
+
 int input_oem4s(raw_t* raw, TcpOem4Stream* stream)
 {
+    static uint8_t buff[MAXRAWLEN];
+    static uint8_t Buff[2 * MAXRAWLEN];
+    static int lenD = 0;
+
     if (raw == nullptr || stream == nullptr) {
         return -2;
     }
 
-    uint8_t data = 0;
+    int lenR = 0;
+    int ReadFlag = 0;
 
-    if (raw->nbyte == 0) {
-        for (int i = 0;; i++) {
-            if (!stream->ReadByte(&data)) {
-                return -2;
-            }
-            if (sync_oem4(raw->buff, data)) {
-                break;
-            }
-            if (i >= 4096) {
-                return 0;
-            }
-        }
+    if (TryDecodeOem4FromStreamBuff(raw, Buff, lenD, ReadFlag)) {
+        return ReadFlag;
     }
 
-    if (!stream->ReadExact(raw->buff + 3, 7)) {
+    lenR = stream->RecvPacket(buff, MAXRAWLEN);
+    if (lenR < 0) {
         return -2;
     }
-    raw->nbyte = 10;
 
-    raw->len = U2(raw->buff + 8) + OEM4HLEN;
-    if (raw->len > MAXRAWLEN - 4) {
-        raw->nbyte = 0;
-        return -1;
+    if (lenR <= 0) {
+        return 0;
     }
 
-    if (!stream->ReadExact(raw->buff + 10, raw->len - 6)) {
-        return -2;
+    if ((lenD + lenR) > 2 * MAXRAWLEN) {
+        lenD = 0;
     }
-    raw->nbyte = 0;
 
-    return decode_oem4(raw);
+    memcpy(Buff + lenD, buff, lenR);
+    lenD += lenR;
+
+    if (TryDecodeOem4FromStreamBuff(raw, Buff, lenD, ReadFlag)) {
+        return ReadFlag;
+    }
+
+    return 0;
 }
